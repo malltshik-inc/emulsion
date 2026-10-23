@@ -2,6 +2,7 @@ use rayon::prelude::*;
 
 use crate::{
     colorops::{apply_black_point, apply_exposure, apply_wb, wb_gains},
+    film::{self, HaldLut},
     geometry::{crop as crop_image, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
@@ -66,13 +67,14 @@ fn write_rgba(rgb: [f32; 3], rgba: &mut [u8]) {
 /// Convert a linear-light `LinearImage` to an 8-bit `RgbaImage`,
 /// applying the sRGB gamma (the final step of the pipeline).
 pub fn tonemap_and_quantize(img: &LinearImage, out: &mut RgbaImage) {
-    tonemap_and_quantize_look(img, 0.0, 0.0, out);
+    tonemap_and_quantize_look(img, 0.0, 0.0, None, out);
 }
 
 fn tonemap_and_quantize_look(
     img: &LinearImage,
     contrast: f32,
     saturation: f32,
+    film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
     let src = &img.data;
@@ -86,7 +88,11 @@ fn tonemap_and_quantize_look(
                 srgb_encode(src[pix + 1].clamp(0.0, 1.0)),
                 srgb_encode(src[pix + 2].clamp(0.0, 1.0)),
             ];
-            write_rgba(apply_look(encoded, contrast, saturation), rgba);
+            let mut rgb = apply_look(encoded, contrast, saturation);
+            if let Some(lut) = film {
+                rgb = lut.sample(rgb);
+            }
+            write_rgba(rgb, rgba);
         });
 }
 
@@ -112,15 +118,33 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
         Some(crop) => crop_image(&working, crop.x, crop.y, crop.width, crop.height),
         None => working,
     };
-    img = rotate_90(&img, params.rotate_90);
-    img = rotate_fine(&img, params.fine_angle);
+    if params.rotate_90 != 0 {
+        img = rotate_90(&img, params.rotate_90);
+    }
+    if params.fine_angle != 0.0 {
+        img = rotate_fine(&img, params.fine_angle);
+    }
 
+    let film = params.film.and_then(|id| film::lut(id).ok());
     let mut out = RgbaImage::new(img.width, img.height);
     if params.invert {
-        invert_negative(&img, &gains, params.exposure, params, &mut out);
+        invert_negative(
+            &img,
+            &gains,
+            params.exposure,
+            params,
+            film.as_deref(),
+            &mut out,
+        );
     } else {
         apply_exposure(&mut img, params.exposure);
-        tonemap_and_quantize_look(&img, params.contrast, params.saturation, &mut out);
+        tonemap_and_quantize_look(
+            &img,
+            params.contrast,
+            params.saturation,
+            film.as_deref(),
+            &mut out,
+        );
     }
     out
 }
@@ -138,6 +162,7 @@ fn invert_negative(
     gains: &[f32; 3],
     exposure_ev: f32,
     params: &PipelineParams,
+    film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
     let exposure = 2.0_f32.powf(exposure_ev);
@@ -154,9 +179,10 @@ fn invert_negative(
                 let lin = (srgb_decode(pos) * gains[c] * exposure).clamp(0.0, 1.0);
                 *value = srgb_encode(lin);
             }
-            write_rgba(
-                apply_look(encoded, params.contrast, params.saturation),
-                rgba,
-            );
+            let mut rgb = apply_look(encoded, params.contrast, params.saturation);
+            if let Some(lut) = film {
+                rgb = lut.sample(rgb);
+            }
+            write_rgba(rgb, rgba);
         });
 }

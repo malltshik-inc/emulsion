@@ -20,9 +20,7 @@ pub fn crop(img: &LinearImage, x0: f32, y0: f32, w: f32, h: f32) -> LinearImage 
         .enumerate()
         .for_each(|(y, row)| {
             let src_start = ((sy + y) * img.width + sx) * 3;
-            for x in 0..sw * 3 {
-                row[x] = img.data[src_start + x];
-            }
+            row[..sw * 3].copy_from_slice(&img.data[src_start..src_start + sw * 3]);
         });
     out
 }
@@ -94,7 +92,7 @@ pub fn rotate_fine(img: &LinearImage, angle_deg: f32) -> LinearImage {
     if angle_deg == 0.0 {
         return img.clone();
     }
-    let rad = angle_deg * 0.017453292519943295;
+    let rad = angle_deg.to_radians();
     let cos = rad.cos();
     let sin = rad.sin();
 
@@ -115,7 +113,7 @@ pub fn rotate_fine(img: &LinearImage, angle_deg: f32) -> LinearImage {
             // inverse rotation by -angle
             let sx = cos * dx + sin * dy + cx;
             let sy = -sin * dx + cos * dy + cy;
-            let (r, g, b) = sample_bilinear(&img, sx, sy);
+            let (r, g, b) = sample_bilinear(img, sx, sy);
             pix[0] = r;
             pix[1] = g;
             pix[2] = b;

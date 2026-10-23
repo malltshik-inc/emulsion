@@ -8,6 +8,7 @@ use crate::{
     demosaic::demosaic_bilinear,
     demosaic::robust_bounds,
     export::save_sidecar,
+    film::{self, Category, HaldLut},
     geometry::{crop, downscale, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
@@ -38,6 +39,7 @@ fn export_sidecar_records_source_and_params() {
         exposure: 1.25,
         contrast: 40.0,
         saturation: 40.0,
+        film: Some(0),
         ..PipelineParams::default()
     };
     save_sidecar(&path, r"C:\film\frame.ORF", &params).unwrap();
@@ -49,6 +51,8 @@ fn export_sidecar_records_source_and_params() {
     assert_eq!(value["params"]["exposure"], 1.25);
     assert_eq!(value["params"]["contrast"], 40.0);
     assert_eq!(value["params"]["saturation"], 40.0);
+    assert_eq!(value["params"]["film"], 0);
+    assert_eq!(value["film_name"], film::films()[0].name);
     std::fs::remove_file(&path).ok();
 }
 
@@ -275,8 +279,10 @@ fn develop_invert_produces_positive_stats() {
     // Inversion runs after the sRGB encode, so 0.05 linear -> 0.23 encoded ->
     // 0.77 positive (~196/255). Inverting in linear first would give ~250.
     let base = make_img(4, 4, 0.05);
-    let mut params = PipelineParams::default();
-    params.invert = true;
+    let params = PipelineParams {
+        invert: true,
+        ..PipelineParams::default()
+    };
     let out = develop(&base, &params);
     let sum: u64 = out
         .data
@@ -294,9 +300,11 @@ fn develop_exposure_brightens_converted_negative() {
     // it (exposure runs *after* inversion).
     let base = make_img(4, 4, 0.4);
     let mean = |exposure: f32| {
-        let mut params = PipelineParams::default();
-        params.invert = true;
-        params.exposure = exposure;
+        let params = PipelineParams {
+            invert: true,
+            exposure,
+            ..PipelineParams::default()
+        };
         let out = develop(&base, &params);
         let sum: u64 = out
             .data
@@ -357,8 +365,8 @@ fn demosaic_robust_bounds_rejects_hot_and_dead_pixels() {
     let w = 64;
     let h = 64;
     let mut bayer = vec![0_u16; w * h];
-    for i in 0..w * h {
-        bayer[i] = 4000 + (i % 500) as u16;
+    for (i, value) in bayer.iter_mut().enumerate() {
+        *value = 4000 + (i % 500) as u16;
     }
     // One hot pixel above and one dead pixel below the real data.
     bayer[w * h / 2] = 65535;
@@ -464,4 +472,98 @@ fn downscale_halves_longest_edge() {
     // average preserved (roughly)
     let (r, g, b) = d.px(50, 25);
     assert!(close(r, 0.1) && close(g, 0.2) && close(b, 0.3));
+}
+
+fn identity_hald(level: usize) -> HaldLut {
+    let levels = level * level;
+    let side = levels * level;
+    let last = (levels - 1) as f32;
+    let mut data = Vec::with_capacity(side * side * 3);
+    for b in 0..levels {
+        for g in 0..levels {
+            for r in 0..levels {
+                data.push((r as f32 / last * 255.0).round() as u8);
+                data.push((g as f32 / last * 255.0).round() as u8);
+                data.push((b as f32 / last * 255.0).round() as u8);
+            }
+        }
+    }
+    HaldLut::from_rgb(side, data).unwrap()
+}
+
+#[test]
+fn hald_identity_roundtrips_encoded_colors() {
+    let lut = identity_hald(3);
+    assert_eq!(lut.levels(), 9);
+    for rgb in [
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [0.31, 0.62, 0.87],
+        [0.05, 0.5, 0.95],
+    ] {
+        let out = lut.sample(rgb);
+        for (channel, expected) in rgb.iter().enumerate() {
+            assert!((out[channel] - expected).abs() < 0.01, "{rgb:?} -> {out:?}");
+        }
+    }
+}
+
+#[test]
+fn hald_rejects_invalid_geometry() {
+    assert!(HaldLut::from_rgb(10, vec![0; 10 * 10 * 3]).is_err());
+    assert!(HaldLut::from_rgb(27, vec![0; 5]).is_err());
+}
+
+#[test]
+fn film_registry_is_populated_and_unique() {
+    let films = film::films();
+    assert!(films.len() >= 250, "only {} simulations", films.len());
+    assert!(films.iter().any(|f| f.category == Category::BlackAndWhite));
+    assert!(films.iter().any(|f| f.category == Category::Color));
+    let mut names: Vec<&str> = films.iter().map(|f| f.name).collect();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), films.len(), "duplicate simulation names");
+}
+
+#[test]
+fn film_lut_decodes_from_embedded_png() {
+    let lut = film::lut(0).unwrap();
+    assert_eq!(lut.levels(), 36);
+    assert!(film::lut(film::films().len() as u16).is_err());
+}
+
+#[test]
+fn develop_black_and_white_film_desaturates() {
+    let mut base = LinearImage::new(2, 2);
+    base.set_px(0, 0, 0.2, 0.5, 0.8);
+    let bw = film::films()
+        .iter()
+        .position(|f| f.category == Category::BlackAndWhite)
+        .expect("a black-and-white simulation") as u16;
+    let params = PipelineParams {
+        film: Some(bw),
+        ..PipelineParams::default()
+    };
+    let out = develop(&base, &params);
+    for pixel in out.data.as_chunks::<4>().0 {
+        let spread = pixel[0].max(pixel[1]).max(pixel[2]) - pixel[0].min(pixel[1]).min(pixel[2]);
+        assert!(spread <= 4, "not grey: {:?}", &pixel[..3]);
+    }
+}
+
+#[test]
+fn params_film_roundtrips_and_old_patches_default_to_none() {
+    let params = PipelineParams {
+        film: Some(42),
+        ..PipelineParams::default()
+    };
+    let json = serde_json::to_string(&params).unwrap();
+    let back = serde_json::from_str::<PipelineParams>(&json).unwrap();
+    assert_eq!(back.film, Some(42));
+
+    let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    value.as_object_mut().unwrap().remove("film");
+    let old = serde_json::from_value::<PipelineParams>(value).unwrap();
+    assert_eq!(old.film, None);
 }

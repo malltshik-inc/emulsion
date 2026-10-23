@@ -94,7 +94,7 @@ pub fn demosaic_bilinear(width: usize, height: usize, bayer: &[u16], cfa: &CFA) 
                             if xx < 0 || xx >= width as i64 {
                                 continue;
                             }
-                            if (cfa.color_at(yy as usize, xx as usize) as usize) == c {
+                            if cfa.color_at(yy as usize, xx as usize) == c {
                                 sum += bayer[yy as usize * width + xx as usize] as f32;
                                 cnt += 1.0;
                             }
@@ -102,13 +102,7 @@ pub fn demosaic_bilinear(width: usize, height: usize, bayer: &[u16], cfa: &CFA) 
                     }
                     rgb[c] = if cnt > 0.0 {
                         let v = (sum / cnt - lo[c]) / span[c];
-                        if v < 0.0 {
-                            0.0
-                        } else if v > 1.0 {
-                            1.0
-                        } else {
-                            v
-                        }
+                        v.clamp(0.0, 1.0)
                     } else {
                         0.0
                     };

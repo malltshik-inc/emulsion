@@ -3,7 +3,7 @@ use std::env;
 use emulsion_core::export::{save_jpeg, save_png};
 use emulsion_core::params::PipelineParams;
 
-const USAGE: &str = "usage: develop <input> <output.png|output.jpg> [--invert] [--ev N] [--contrast N] [--saturation N]";
+const USAGE: &str = "usage: develop <input> <output.png|output.jpg> [--invert] [--ev N] [--contrast N] [--saturation N] [--film ID]";
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -33,6 +33,18 @@ fn main() {
                 if let Some(v) = rest.next().and_then(|v| v.parse().ok()) {
                     params.saturation = v;
                 }
+            }
+            "--film" => {
+                let Some(id) = rest.next().and_then(|v| v.parse::<u16>().ok()) else {
+                    eprintln!("--film needs a simulation id");
+                    std::process::exit(2);
+                };
+                let Some(film) = emulsion_core::film::find(id) else {
+                    eprintln!("no film simulation with id {}", id);
+                    std::process::exit(2);
+                };
+                eprintln!("film: {} ({})", film.name, id);
+                params.film = Some(id);
             }
             other => {
                 eprintln!("unknown argument: {}", other);

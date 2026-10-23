@@ -2,11 +2,11 @@
 
 use eframe::egui;
 use egui::{
-    Align, Align2, Color32, FontFamily, FontId, Layout, Margin, Pos2, Rect, RichText, Sense,
-    Stroke, StrokeKind, TextStyle, Vec2, pos2, vec2,
+    Align, Align2, Color32, FontFamily, FontId, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2, pos2, scroll_area::ScrollBarVisibility, vec2,
 };
 
 use emulsion_core::{
+    film,
     params::{CropRect, PipelineParams},
     tonemap::develop,
 };
@@ -20,8 +20,15 @@ use std::time::{Duration, Instant};
 const THUMB_EDGE: usize = 96;
 const SIDEBAR_WIDTH: f32 = 308.0;
 const TOPBAR_HEIGHT: f32 = 62.0;
-const SETTINGS_HEIGHT: f32 = 58.0;
-const SETTINGS_OPEN_HEIGHT: f32 = 118.0;
+const SETTINGS_HEIGHT: f32 = 70.0;
+const SETTINGS_OPEN_HEIGHT: f32 = 126.0;
+const SETTINGS_SIMULATIONS_HEIGHT: f32 = 248.0;
+const FILM_CARD_WIDTH: f32 = 96.0;
+const FILM_CARD_HEIGHT: f32 = 116.0;
+const FILM_CARD_GAP: f32 = 8.0;
+const FILM_THUMB_HEIGHT: f32 = 66.0;
+const FILM_PRELOAD_CARDS: f32 = 2.0;
+const FILM_PRELOAD_MARGIN: f32 = FILM_PRELOAD_CARDS * (FILM_CARD_WIDTH + FILM_CARD_GAP);
 
 const BG: Color32 = Color32::from_rgb(242, 236, 221);
 const PANEL: Color32 = Color32::from_rgb(250, 246, 236);
@@ -60,6 +67,8 @@ struct Histogram {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
+    Develop,
+    Simulations,
     Wb,
     Tint,
     Ev,
@@ -72,6 +81,8 @@ enum Tool {
 impl Tool {
     fn name(self) -> &'static str {
         match self {
+            Self::Develop => "Develop",
+            Self::Simulations => "Simulations",
             Self::Wb => "White Balance",
             Self::Tint => "Tint",
             Self::Ev => "Exposure",
@@ -84,6 +95,8 @@ impl Tool {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Develop => "DEVELOP",
+            Self::Simulations => "SIMULATIONS",
             Self::Wb => "WB",
             Self::Tint => "TINT",
             Self::Ev => "EV",
@@ -96,6 +109,8 @@ impl Tool {
 
     fn code(self) -> &'static str {
         match self {
+            Self::Develop => "DEVELOP",
+            Self::Simulations => "SIMULATION",
             Self::Wb => "WB",
             Self::Tint => "TINT",
             Self::Ev => "EV",
@@ -108,6 +123,8 @@ impl Tool {
 
     fn aliases(self) -> &'static str {
         match self {
+            Self::Develop => "develop negative positive invert",
+            Self::Simulations => "film simulation lut negative positive invert develop",
             Self::Wb => "white balance temperature warm cool",
             Self::Tint => "tint magenta green",
             Self::Ev => "exposure brightness",
@@ -122,7 +139,7 @@ impl Tool {
         match self {
             Self::Ev => -3.0..=3.0,
             Self::Rotate => -5.0..=5.0,
-            Self::Crop => 0.0..=0.0, // Crop uses different UI
+            Self::Crop | Self::Develop | Self::Simulations => 0.0..=0.0, // use different UI
             _ => -100.0..=100.0,
         }
     }
@@ -149,8 +166,8 @@ impl Tool {
             Self::Contrast => &mut params.contrast,
             Self::Saturation => &mut params.saturation,
             Self::Rotate => &mut params.fine_angle,
-            Self::Crop => {
-                // Crop doesn't have a single f32 value; this should not be called for Crop
+            Self::Crop | Self::Develop | Self::Simulations => {
+                // Crop, Develop and Simulations have no single f32 value; not called for them.
                 fn get_dummy() -> &'static mut f32 {
                     static mut DUMMY: f32 = 0.0;
                     let ptr: *mut f32 = &raw mut DUMMY;
@@ -163,6 +180,8 @@ impl Tool {
 
     fn changed(self, params: &PipelineParams) -> bool {
         match self {
+            Self::Develop => params.invert,
+            Self::Simulations => params.film.is_some(),
             Self::Rotate => params.fine_angle != 0.0 || params.rotate_90 != 0,
             Self::Crop => params.crop.is_some(),
             _ => {
@@ -249,6 +268,7 @@ struct EmulsionApp {
     thumb_bases: Vec<Option<emulsion_core::image::LinearImage>>,
     thumb_textures: Vec<Option<egui::TextureHandle>>,
     thumb_sizes: Vec<Option<(usize, usize)>>,
+    thumb_params: Vec<Option<PipelineParams>>,
     thumb_rx: Option<Receiver<ThumbMessage>>,
     thumb_cancel: Option<Arc<AtomicBool>>,
     thumb_generation: u64,
@@ -266,6 +286,12 @@ struct EmulsionApp {
     open_tool: Option<Tool>,
     tool_search: String,
     focus_search: bool,
+    film_search: String,
+    film_focus_search: bool,
+    film_textures: HashMap<Option<u16>, egui::TextureHandle>,
+    film_preview_base: Option<emulsion_core::image::LinearImage>,
+    film_preview_params: Option<PipelineParams>,
+    film_preview_source: Option<usize>,
     histogram: Option<Histogram>,
 
     logo: Option<egui::TextureHandle>,
@@ -299,6 +325,7 @@ impl EmulsionApp {
             thumb_bases: Vec::new(),
             thumb_textures: Vec::new(),
             thumb_sizes: Vec::new(),
+            thumb_params: Vec::new(),
             thumb_rx: None,
             thumb_cancel: None,
             thumb_generation: 0,
@@ -314,6 +341,12 @@ impl EmulsionApp {
             open_tool: None,
             tool_search: String::new(),
             focus_search: false,
+            film_search: String::new(),
+            film_focus_search: false,
+            film_textures: HashMap::new(),
+            film_preview_base: None,
+            film_preview_params: None,
+            film_preview_source: None,
             histogram: None,
             logo,
             wordmark_family,
@@ -367,6 +400,10 @@ impl EmulsionApp {
             self.texture_size = None;
             self.histogram = None;
             self.params = PipelineParams::default();
+            self.film_textures.clear();
+            self.film_preview_base = None;
+            self.film_preview_params = None;
+            self.film_preview_source = None;
             self.dirty = true;
             match Self::list_images(path.as_str()) {
                 Ok(files) => {
@@ -415,6 +452,10 @@ impl EmulsionApp {
         self.texture = None;
         self.texture_size = None;
         self.histogram = None;
+        self.film_textures.clear();
+        self.film_preview_base = None;
+        self.film_preview_params = None;
+        self.film_preview_source = None;
         self.dirty = true;
         self.load_selected();
     }
@@ -482,6 +523,7 @@ impl EmulsionApp {
         self.thumb_bases = vec![None; self.files.len()];
         self.thumb_textures = vec![None; self.files.len()];
         self.thumb_sizes = vec![None; self.files.len()];
+        self.thumb_params = vec![None; self.files.len()];
         self.thumbs_dirty = true;
 
         let files = self.files.clone();
@@ -567,6 +609,10 @@ impl EmulsionApp {
             let Some(base) = &self.thumb_bases[i] else {
                 continue;
             };
+            let cached = self.thumb_params.get(i).copied().flatten();
+            if cached == Some(params) && self.thumb_textures[i].is_some() {
+                continue;
+            }
             let out = develop(base, &params);
             let size = [out.width, out.height];
             let image = egui::ColorImage::from_rgba_unmultiplied(size, &out.data);
@@ -577,6 +623,9 @@ impl EmulsionApp {
                     let handle = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
                     self.thumb_textures[i] = Some(handle);
                 }
+            }
+            if let Some(slot) = self.thumb_params.get_mut(i) {
+                *slot = Some(params);
             }
         }
         self.thumbs_dirty = false;
@@ -759,21 +808,14 @@ impl EmulsionApp {
             StrokeKind::Inside,
         );
 
-        let word_y = center_y + 2.0;
-        let word_font = FontId::new(21.0, self.wordmark_family.clone());
-        let word_rect = painter.text(
+        let word_y = center_y + 6.0;
+        let word_font = FontId::new(22.0, self.wordmark_family.clone());
+        painter.text(
             pos2(logo_rect.right() + 10.0, word_y),
             Align2::LEFT_CENTER,
             "Emulsion",
             word_font.clone(),
             TEXT,
-        );
-        painter.text(
-            pos2(word_rect.right() + 1.0, word_y),
-            Align2::LEFT_CENTER,
-            ".",
-            word_font,
-            ACCENT,
         );
 
         let has_file = self.cursor.is_some();
@@ -1066,27 +1108,31 @@ impl EmulsionApp {
 
     fn settings_panel(&mut self, ui: &mut egui::Ui) {
         if !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_pressed(egui::Key::Slash)) {
-            self.focus_search = true;
+            if self.open_tool == Some(Tool::Simulations) {
+                self.film_focus_search = true;
+            } else {
+                self.focus_search = true;
+            }
         }
 
         let query = self.tool_search.trim().to_lowercase();
         let invert_before = self.params.invert;
+        let film_before = self.params.film;
         let mut params = self.params;
         let mut open_tool = self.open_tool;
         let mut search_id = None;
 
-        ui.horizontal(|ui| {
-            let frame = egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(255, 252, 245, 180))
-                .stroke(Stroke::new(1.0, LINE))
-                .corner_radius(8.0)
-                .inner_margin(Margin::symmetric(10, 0));
-            frame.show(ui, |ui| {
+        let frame = egui::Frame::new()
+            .stroke(Stroke::new(1.0, LINE))
+            .corner_radius(8.0)
+            .inner_margin(Margin::symmetric(10, 5));
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
                 let response = ui.add_sized(
                     vec2(142.0, 30.0),
                     egui::TextEdit::singleline(&mut self.tool_search)
                         .hint_text(RichText::new("Search tools").color(DIM))
-                        .font(FontId::proportional(14.0))
+                        .font(FontId::proportional(16.0))
                         .text_color(TEXT)
                         .align(Align2::LEFT_CENTER)
                         .margin(Margin::ZERO)
@@ -1097,45 +1143,45 @@ impl EmulsionApp {
                     self.tool_search.clear();
                     response.surrender_focus();
                 }
-            });
-            ui.add_space(10.0);
-
-            let separator_visible = query.is_empty();
-            let film_visible =
-                query.is_empty() || "film negative positive invert develop".contains(&query);
-            if film_visible {
-                let response = tool_tab(ui, "FILM", params.invert, false);
-                if response.clicked() {
-                    params.invert = !params.invert;
-                }
-            }
-            const TOOLS: &[Tool] = &[
-                Tool::Crop,
-                Tool::Rotate,
-                Tool::Wb,
-                Tool::Tint,
-                Tool::Ev,
-                Tool::Contrast,
-                Tool::Saturation,
-            ];
-            for &tool in TOOLS {
-                if tool_visible(&query, tool) {
-                    let response = tool_tab(
-                        ui,
-                        tool.label(),
-                        open_tool == Some(tool),
-                        tool.changed(&params),
-                    );
-                    if response.clicked() {
-                        open_tool = toggle_tool(open_tool, tool);
-                    }
-                }
-            }
-
-            if separator_visible {
+                
                 let (rect, _) = ui.allocate_exact_size(vec2(1.0, 18.0), Sense::hover());
                 ui.painter().rect_filled(rect, 0.0, LINE);
-            }
+
+                let available_width = ui.available_width();
+                egui::ScrollArea::horizontal()
+                    .id_salt("tools_horizontal_scroll")
+                    .max_width(available_width)
+                    .auto_shrink([false, true])
+                    .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            const TOOLS: &[Tool] = &[
+                                Tool::Develop,
+                                Tool::Simulations,
+                                Tool::Crop,
+                                Tool::Rotate,
+                                Tool::Ev,
+                                Tool::Contrast,
+                                Tool::Wb,
+                                Tool::Tint,
+                                Tool::Saturation,
+                            ];
+                            for &tool in TOOLS {
+                                if tool_visible(&query, tool) {
+                                    let response = tool_tab(
+                                        ui,
+                                        tool.label(),
+                                        open_tool == Some(tool),
+                                        tool.changed(&params),
+                                    );
+                                    if response.clicked() {
+                                        open_tool = toggle_tool(open_tool, tool);
+                                    }
+                                }
+                            }
+                        })
+                    });
+            });
         });
 
         if let Some(id) = search_id
@@ -1146,128 +1192,148 @@ impl EmulsionApp {
         }
 
         if let Some(tool) = open_tool {
-            ui.add_space(10.0);
             let frame = egui::Frame::new()
                 .fill(PANEL_TOP)
                 .stroke(Stroke::new(1.0, LINE))
                 .corner_radius(10.0)
                 .inner_margin(Margin::symmetric(15, 0));
             frame.show(ui, |ui| {
-                ui.allocate_ui_with_layout(
-                    vec2(ui.available_width(), 50.0),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        if tool == Tool::Crop {
-                            ui.allocate_ui_with_layout(
-                                vec2(140.0, 50.0),
-                                Layout::left_to_right(Align::Center),
-                                |ui| {
-                                    ui.label(RichText::new("Crop").size(14.0).strong().color(TEXT));
-                                },
-                            );
-                        } else {
-                            ui.allocate_ui_with_layout(
-                                vec2(164.0, 36.0),
-                                Layout::top_down(Align::Min),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing.y = 1.0;
-                                    ui.label(
-                                        RichText::new(tool.name()).size(14.0).strong().color(TEXT),
-                                    );
-                                    ui.label(
-                                        RichText::new(tool.code()).size(10.5).strong().color(DIM),
-                                    );
-                                },
-                            );
-                        }
-
-                        if tool == Tool::Rotate {
-                            rotate_buttons(ui, &mut params);
-                        }
-
-                        match tool {
-                            Tool::Crop => {
-                                ui.add_space(4.0);
-                                if crop_controls(self, ui, &mut params) {
-                                    open_tool = None;
-                                }
-                            }
-                            _ => {
-                                // Standard slider + dragvalue + reset for other tools
-                                let value = tool.value_mut(&mut params);
-                                ui.spacing_mut().slider_width =
-                                    (ui.available_width() - 56.0 - 28.0 - 32.0).max(70.0);
-                                let response = ui.add(
-                                    egui::Slider::new(value, tool.range())
-                                        .show_value(false)
-                                        .trailing_fill(true)
-                                        .step_by(if tool.decimals() > 0 { 0.1 } else { 1.0 }),
-                                );
-                                let reset = ui.input(|i| {
-                                    i.pointer
-                                        .button_double_clicked(egui::PointerButton::Primary)
-                                        && i.pointer
-                                            .interact_pos()
-                                            .is_some_and(|pos| response.rect.contains(pos))
-                                });
-                                if reset {
-                                    *value = 0.0;
-                                }
-
-                                let decimals = tool.decimals();
-                                let suffix = tool.suffix();
-                                let mut shown = *value;
+                if tool == Tool::Develop {
+                    open_tool = None;
+                    params.invert = !params.invert;
+                } else if tool == Tool::Simulations {
+                    self.film_controls(ui, &mut params);
+                } else {
+                    ui.allocate_ui_with_layout(
+                        vec2(ui.available_width(), 50.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            if tool == Tool::Crop {
                                 ui.allocate_ui_with_layout(
-                                    vec2(56.0, 32.0),
-                                    Layout::right_to_left(Align::Center),
+                                    vec2(140.0, 50.0),
+                                    Layout::left_to_right(Align::Center),
                                     |ui| {
-                                        ui.visuals_mut().override_text_color = Some(ACCENT);
-                                        let response = ui.add(
-                                            egui::DragValue::new(&mut shown)
-                                                .range(tool.range())
-                                                .speed(if decimals > 0 { 0.1 } else { 1.0 })
-                                                .fixed_decimals(decimals)
-                                                .custom_formatter(move |value, _| {
-                                                    signed_value(value, decimals, suffix)
-                                                }),
+                                        ui.label(
+                                            RichText::new("Crop").size(14.0).strong().color(TEXT),
                                         );
-                                        if response.changed() {
-                                            *value = shown;
-                                        }
                                     },
                                 );
+                            } else {
+                                ui.allocate_ui_with_layout(
+                                    vec2(140.0, 50.0),
+                                    Layout::left_to_right(Align::Center),
+                                    |ui| {
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        ui.label(
+                                            RichText::new(tool.name())
+                                                .size(14.0)
+                                                .strong()
+                                                .color(TEXT),
+                                        );
+                                        ui.label(
+                                            RichText::new(tool.code())
+                                                .size(10.5)
+                                                .strong()
+                                                .color(DIM),
+                                        );
+                                    },
+                                );
+                            }
 
-                                let reset_clicked = ui
-                                    .add(
-                                        egui::Button::new(RichText::new("↺").size(15.0).color(DIM))
+                            if tool == Tool::Rotate {
+                                rotate_buttons(ui, &mut params);
+                            }
+
+                            match tool {
+                                Tool::Crop => {
+                                    ui.add_space(4.0);
+                                    if crop_controls(self, ui, &mut params) {
+                                        open_tool = None;
+                                    }
+                                }
+                                _ => {
+                                    // Standard slider + dragvalue + reset for other tools
+                                    let value = tool.value_mut(&mut params);
+                                    ui.spacing_mut().slider_width = ui.available_width() - 99.0;
+                                    let response = ui.add(
+                                        egui::Slider::new(value, tool.range())
+                                            .show_value(false)
+                                            .trailing_fill(true)
+                                            .step_by(if tool.decimals() > 0 { 0.1 } else { 1.0 }),
+                                    );
+                                    let reset = ui.input(|i| {
+                                        i.pointer
+                                            .button_double_clicked(egui::PointerButton::Primary)
+                                            && i.pointer
+                                                .interact_pos()
+                                                .is_some_and(|pos| response.rect.contains(pos))
+                                    });
+                                    if reset {
+                                        *value = 0.0;
+                                    }
+
+                                    let decimals = tool.decimals();
+                                    let suffix = tool.suffix();
+                                    let mut shown = *value;
+                                    ui.allocate_ui_with_layout(
+                                        vec2(56.0, 32.0),
+                                        Layout::right_to_left(Align::Center),
+                                        |ui| {
+                                            ui.visuals_mut().override_text_color = Some(ACCENT);
+                                            let response = ui.add(
+                                                egui::DragValue::new(&mut shown)
+                                                    .range(tool.range())
+                                                    .speed(if decimals > 0 { 0.1 } else { 1.0 })
+                                                    .fixed_decimals(decimals)
+                                                    .custom_formatter(move |value, _| {
+                                                        signed_value(value, decimals, suffix)
+                                                    }),
+                                            );
+                                            if response.changed() {
+                                                *value = shown;
+                                            }
+                                        },
+                                    );
+
+                                    let reset_clicked = ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("↺").size(15.0).color(DIM),
+                                            )
                                             .fill(Color32::TRANSPARENT)
                                             .stroke(Stroke::NONE)
                                             .corner_radius(6.0)
                                             .min_size(vec2(28.0, 28.0)),
-                                    )
-                                    .on_hover_text("Reset adjustment")
-                                    .clicked();
-                                if reset_clicked {
-                                    *value = 0.0;
-                                    if tool == Tool::Rotate {
-                                        params.rotate_90 = 0;
+                                        )
+                                        .on_hover_text("Reset adjustment")
+                                        .clicked();
+                                    if reset_clicked {
+                                        *value = 0.0;
+                                        if tool == Tool::Rotate {
+                                            params.rotate_90 = 0;
+                                        }
                                     }
                                 }
                             }
-                        }
-                    },
-                );
+                        },
+                    );
+                }
             });
         }
 
         if params != self.params {
             self.params = params;
             self.dirty = true;
-            if params.invert != invert_before {
+            if params.film != film_before {
+                match params.film.and_then(film::name) {
+                    Some(name) => self.show_toast(format!("Simulations · {}", name)),
+                    None => self.show_toast("Simulations · none"),
+                }
+            } else if params.invert != invert_before {
                 self.show_toast(if params.invert {
-                    "Film · inverted"
+                    "Develop · inverted"
                 } else {
-                    "Film · positive"
+                    "Develop · positive"
                 });
             }
         }
@@ -1295,6 +1361,172 @@ impl EmulsionApp {
             }
             self.open_tool = open_tool;
         }
+    }
+
+    fn film_controls(&mut self, ui: &mut egui::Ui, params: &mut PipelineParams) {
+        ui.add_space(10.0);
+        let mut search_id = None;
+        ui.horizontal(|ui| {
+            let selected = params.film.and_then(film::name);
+            ui.allocate_ui_with_layout(vec2(164.0, 36.0), Layout::top_down(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(RichText::new("Simulations").size(14.0).strong().color(TEXT));
+                let subtitle = ui.add(
+                    egui::Label::new(
+                        RichText::new(selected.unwrap_or("NO SIMULATION"))
+                            .size(10.5)
+                            .strong()
+                            .color(DIM),
+                    )
+                    .truncate(),
+                );
+                if let Some(name) = selected {
+                    subtitle.on_hover_text(name);
+                }
+            });
+
+            ui.add_space(8.0);
+            let search_width = (ui.available_width() - 70.0).clamp(180.0, 280.0);
+            let frame = egui::Frame::new()
+                .fill(Color32::from_rgba_unmultiplied(255, 252, 245, 180))
+                .stroke(Stroke::new(1.0, LINE))
+                .corner_radius(8.0)
+                .inner_margin(Margin::symmetric(10, 0));
+            frame.show(ui, |ui| {
+                let response = ui.add_sized(
+                    vec2(search_width, 28.0),
+                    egui::TextEdit::singleline(&mut self.film_search)
+                        .hint_text(RichText::new("Search simulations").color(DIM))
+                        .font(FontId::proportional(13.0))
+                        .text_color(TEXT)
+                        .align(Align2::LEFT_CENTER)
+                        .margin(Margin::ZERO)
+                        .frame(egui::Frame::NONE),
+                );
+                search_id = Some(response.id);
+                if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    self.film_search.clear();
+                    response.surrender_focus();
+                }
+            });
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let reset = ui
+                    .add(
+                        egui::Button::new(RichText::new("↺").size(15.0).color(DIM))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE)
+                            .corner_radius(6.0)
+                            .min_size(vec2(28.0, 28.0)),
+                    )
+                    .on_hover_text("Reset film simulation");
+                if reset.clicked() {
+                    params.film = None;
+                }
+            });
+        });
+        if let Some(id) = search_id
+            && self.film_focus_search
+        {
+            ui.ctx().memory_mut(|memory| memory.request_focus(id));
+            self.film_focus_search = false;
+        }
+
+        ui.add_space(8.0);
+        self.film_strip(ui, params);
+    }
+
+    fn film_strip(&mut self, ui: &mut egui::Ui, params: &mut PipelineParams) {
+        let mut preview_params = *params;
+        preview_params.film = None;
+        preview_params.crop = None;
+
+        if self.film_preview_source != self.cursor {
+            self.film_preview_source = self.cursor;
+            self.film_preview_base = None;
+            self.film_preview_params = None;
+            self.film_textures.clear();
+        }
+        if self.film_preview_params != Some(preview_params) {
+            self.film_preview_params = Some(preview_params);
+            self.film_textures.clear();
+        }
+        if self.film_preview_base.is_none()
+            && let Some(loaded) = &self.loaded
+        {
+            self.film_preview_base =
+                Some(emulsion_core::geometry::downscale(&loaded.base_small, 160));
+        }
+
+        let query = self.film_search.trim().to_lowercase();
+        let ids: Vec<u16> = film::films()
+            .iter()
+            .enumerate()
+            .filter(|(_, film)| query.is_empty() || film.name.to_lowercase().contains(&query))
+            .map(|(id, _)| id as u16)
+            .collect();
+
+        let preview_base = self.film_preview_base.as_ref();
+        let textures = &mut self.film_textures;
+        let source = self.cursor;
+        let mut chosen = params.film;
+
+        egui::ScrollArea::horizontal()
+            .id_salt("film_strip")
+            .auto_shrink([false, true])
+            .scroll_bar_visibility(ScrollBarVisibility::AlwaysHidden)
+            .show_viewport(ui, |ui, viewport| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = FILM_CARD_GAP;
+
+                    let x = ui.cursor().min.x;
+                    let visible = film_card_visible(x, viewport);
+                    let texture = film_preview_texture(
+                        textures,
+                        preview_base,
+                        preview_params,
+                        None,
+                        source,
+                        ui.ctx(),
+                        visible,
+                    );
+                    if film_card(
+                        ui,
+                        texture.as_ref(),
+                        "No simulation",
+                        None,
+                        chosen.is_none(),
+                    ) {
+                        chosen = None;
+                    }
+
+                    for &id in &ids {
+                        let x = ui.cursor().min.x;
+                        let visible = film_card_visible(x, viewport);
+                        let Some(film) = film::find(id) else { continue };
+                        let texture = film_preview_texture(
+                            textures,
+                            preview_base,
+                            preview_params,
+                            Some(id),
+                            source,
+                            ui.ctx(),
+                            visible,
+                        );
+                        if film_card(
+                            ui,
+                            texture.as_ref(),
+                            film.name,
+                            Some(film.category),
+                            chosen == Some(id),
+                        ) {
+                            chosen = Some(id);
+                        }
+                    }
+                });
+            });
+
+        params.film = chosen;
     }
 
     fn stage(&mut self, ui: &mut egui::Ui) {
@@ -1825,6 +2057,8 @@ impl eframe::App for EmulsionApp {
             self.sync_thumbnails(ui.ctx());
         }
 
+        ui.style_mut().always_scroll_the_only_direction = true;
+
         egui::Panel::top("top_panel")
             .exact_size(TOPBAR_HEIGHT)
             .frame(
@@ -1843,10 +2077,10 @@ impl eframe::App for EmulsionApp {
             )
             .show(ui, |ui| self.sidebar(ui));
 
-        let settings_height = if self.open_tool.is_some() {
-            SETTINGS_OPEN_HEIGHT
-        } else {
-            SETTINGS_HEIGHT
+        let settings_height = match self.open_tool {
+            Some(Tool::Simulations) => SETTINGS_SIMULATIONS_HEIGHT,
+            Some(_) => SETTINGS_OPEN_HEIGHT,
+            None => SETTINGS_HEIGHT,
         };
         egui::Panel::top("settings_panel")
             .exact_size(settings_height)
@@ -1996,6 +2230,125 @@ fn file_extension(path: &str) -> String {
         .extension()
         .map(|s| s.to_string_lossy().to_uppercase())
         .unwrap_or_else(|| String::from("IMAGE"))
+}
+
+fn film_card_visible(x: f32, viewport: Rect) -> bool {
+    x + FILM_CARD_WIDTH >= viewport.left() - FILM_PRELOAD_MARGIN
+        && x <= viewport.right() + FILM_PRELOAD_MARGIN
+}
+
+fn film_preview_texture(
+    textures: &mut HashMap<Option<u16>, egui::TextureHandle>,
+    base: Option<&emulsion_core::image::LinearImage>,
+    preview_params: PipelineParams,
+    film_id: Option<u16>,
+    source: Option<usize>,
+    ctx: &egui::Context,
+    visible: bool,
+) -> Option<egui::TextureHandle> {
+    if !visible {
+        return textures.get(&film_id).cloned();
+    }
+    if let Some(texture) = textures.get(&film_id) {
+        return Some(texture.clone());
+    }
+    let base = base?;
+    let mut params = preview_params;
+    params.film = film_id;
+    let out = develop(base, &params);
+    let image = egui::ColorImage::from_rgba_unmultiplied([out.width, out.height], &out.data);
+    let name = format!("film-preview-{:?}-{:?}", source, film_id);
+    let texture = ctx.load_texture(name, image, egui::TextureOptions::LINEAR);
+    textures.insert(film_id, texture.clone());
+    Some(texture)
+}
+
+fn film_card(
+    ui: &mut egui::Ui,
+    texture: Option<&egui::TextureHandle>,
+    name: &str,
+    category: Option<film::Category>,
+    selected: bool,
+) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(FILM_CARD_WIDTH, FILM_CARD_HEIGHT), Sense::click());
+    let painter = ui.painter();
+    let inner = rect.shrink(1.0);
+    let hovered = response.hovered();
+
+    if selected {
+        // painter.rect_filled(inner, 8.0, ACCENT_SOFT);
+    } else if hovered {
+        // painter.rect_filled(inner, 8.0, HOVER);
+    }
+
+    let thumb = Rect::from_min_size(
+        pos2(inner.left() + 4.0, inner.top() + 4.0),
+        vec2(inner.width() - 8.0, FILM_THUMB_HEIGHT),
+    );
+    painter.rect_filled(thumb, 5.0, Color32::from_rgb(233, 225, 209));
+    match texture {
+        Some(texture) => {
+            let uv = cover_uv(texture.size_vec2(), thumb.size());
+            egui::Image::from_texture(texture)
+                .uv(uv)
+                .corner_radius(5.0)
+                .maintain_aspect_ratio(false)
+                .fit_to_exact_size(thumb.size())
+                .paint_at(ui, thumb);
+        }
+        None => {
+            painter.text(
+                thumb.center(),
+                Align2::CENTER_CENTER,
+                "…",
+                FontId::proportional(16.0),
+                DIM,
+            );
+        }
+    }
+    painter.rect_stroke(
+        thumb,
+        5.0,
+        if selected || hovered {
+            Stroke::new(2.0, ACCENT)
+        } else {
+            Stroke::new(1.0, LINE)
+        },
+        StrokeKind::Inside,
+    );
+
+    if let Some(category) = category {
+        let label = match category {
+            film::Category::BlackAndWhite => "B&W",
+            film::Category::Color => "COLOR",
+        };
+        let galley =
+            painter.layout_no_wrap(label.to_owned(), FontId::monospace(8.0), Color32::WHITE);
+        let badge = Rect::from_min_size(
+            pos2(thumb.left() + 4.0, thumb.top() + 4.0),
+            galley.size() + vec2(8.0, 4.0),
+        );
+        painter.rect_filled(badge, 3.0, Color32::from_black_alpha(130));
+        painter.galley(badge.min + vec2(4.0, 2.0), galley, Color32::WHITE);
+    }
+
+    let text_rect = Rect::from_min_max(
+        pos2(inner.left() + 3.0, thumb.bottom() + 4.0),
+        pos2(inner.right() - 3.0, inner.bottom() - 2.0),
+    );
+    let color = if selected { TEXT } else { MUTED };
+    let galley = painter.layout(
+        name.to_owned(),
+        FontId::proportional(10.5),
+        color,
+        text_rect.width(),
+    );
+    painter
+        .with_clip_rect(text_rect)
+        .galley(text_rect.min, galley, color);
+
+    response.clicked()
 }
 
 fn rotate_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
@@ -2373,4 +2726,50 @@ fn main() {
         Box::new(|cc| Ok(Box::new(EmulsionApp::new(cc)))),
     );
     std::process::exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn film_card_visibility_preloads_two_cards() {
+        let viewport = Rect::from_min_size(pos2(100.0, 0.0), vec2(300.0, 100.0));
+        assert!(film_card_visible(96.0, viewport));
+        assert!(film_card_visible(420.0, viewport));
+        assert!(film_card_visible(400.0 + FILM_PRELOAD_MARGIN, viewport));
+        assert!(!film_card_visible(401.0 + FILM_PRELOAD_MARGIN, viewport));
+        assert!(film_card_visible(-204.0, viewport));
+        assert!(!film_card_visible(-205.0, viewport));
+    }
+
+    #[test]
+    fn film_panel_widgets_render_headless() {
+        egui::__run_test_ui(|ui| {
+            let mut base = emulsion_core::image::LinearImage::new(2, 2);
+            base.set_px(0, 0, 0.2, 0.5, 0.8);
+            let mut textures = HashMap::new();
+            let texture = film_preview_texture(
+                &mut textures,
+                Some(&base),
+                PipelineParams::default(),
+                Some(0),
+                None,
+                ui.ctx(),
+                true,
+            );
+            assert!(texture.is_some(), "preview texture was not built");
+            assert!(textures.contains_key(&Some(0)));
+            let clicked = film_card(
+                ui,
+                texture.as_ref(),
+                "Agfa APX 100",
+                Some(film::Category::BlackAndWhite),
+                false,
+            );
+            assert!(!clicked);
+            let clicked = film_card(ui, None, "No simulation", None, true);
+            assert!(!clicked);
+        });
+    }
 }

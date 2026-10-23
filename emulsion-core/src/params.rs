@@ -23,6 +23,9 @@ pub struct PipelineParams {
     pub contrast: f32,
     /// Saturation, -100..100 (0 = neutral, - = greyscale, + = more saturated)
     pub saturation: f32,
+    /// Index into [`crate::film::films`], `None` = no film simulation.
+    #[serde(default)]
+    pub film: Option<u16>,
     /// Per-channel black point, 0.0..1.0
     pub black_point: [f32; 3],
     /// negative -> positive flip
@@ -42,6 +45,7 @@ impl Default for PipelineParams {
             exposure: 0.0,
             contrast: 0.0,
             saturation: 0.0,
+            film: None,
             black_point: [0.0, 0.0, 0.0],
             invert: false,
             rotate_90: 0,

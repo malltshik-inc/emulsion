@@ -45,10 +45,16 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
 | `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
 | `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `downscale` (box average) |
-| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate → invert+exposure → contrast/saturation) |
-| `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params) |
+| `film.rs` | bundled film simulations: generated `FILMS` registry, lazy decoded `HaldLut` cache, trilinear sampling |
+| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate → invert+exposure → contrast/saturation → film LUT) |
+| `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params + film name) |
 | `error.rs` | `CoreError`, `Result<T>` = `std::result::Result<T, CoreError>` |
-| `tests.rs` | 26 unit tests, one per op (incl. robust-bounds, inversion and sidecar tests) |
+| `tests.rs` | 32 unit tests, one per op (incl. robust-bounds, inversion, Hald and sidecar tests) |
+
+`build.rs` scans `assets/film/{bw,color}/*.png` and emits `film_registry.rs`
+(`include_bytes!` per LUT), so adding a PNG is enough to make it appear in the UI.
+The assets are level-6 Hald CLUTs (216×216, 36³ cube) resampled from the
+RawTherapee level-12 collection; see `assets/film/ATTRIBUTION.md` (CC BY-SA 4.0).
 
 ### emulsion-app (`emulsion-app/src/main.rs`)
 
@@ -65,6 +71,8 @@ State held by `EmulsionApp`:
 | `thumb_rx`, `thumb_cancel`, `thumb_generation` | background thumbnail worker channel + cancel flag + stale-result guard |
 | `params: PipelineParams` | the live editing state ("the patch") |
 | `settings: HashMap<String, PipelineParams>` | per-file settings for the session, keyed by path |
+| `film_search`, `film_textures`, `film_preview_base` | film strip filter, per-simulation preview textures and the ≤160 px base they are developed from; textures are rebuilt when the source or non-film params change |
+| `open_tool`, `tool_search` | which tool panel is expanded and the tool-filter query |
 | `texture`, `texture_size` | egui GPU texture of the developed preview |
 | `zoom`, `pan` | canvas transform |
 | `status`, `dirty` | status line + re-render flag; `thumbs_dirty` rebuilds row thumbnails |
@@ -76,8 +84,9 @@ Workflow in `App::ui` each frame:
 1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
 2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`.
 3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` each cached thumbnail base with that file's params (the selected row uses the live `params`) and upload it.
-4. Build panels (top bar, left file list, right tools, bottom status, central canvas);
-   each panel calls its own method on `self` (keeps the egui closures single-capture).
+4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
+   central canvas); each panel calls its own method on `self` (keeps the egui
+   closures single-capture).
 5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders one row per file (thumbnail + basename) from the thumbnail cache; no separate preview pane.
 
 Selecting a row calls `select_file`: it stores the current `params` under the old
@@ -104,8 +113,15 @@ source
                                  linear, ×gains×2^EV, re-encode
               contrast           smoothstep S-curve blended by contrast/100
               saturation         scale distance from Rec.709 luma by 1+sat/100
+              film LUT           trilinear sample of the selected Hald CLUT
               quantize           round → u8, alpha 255
 ```
+
+Film LUTs run last (RawTherapee convention) on sRGB-encoded values, in both the
+positive and inverted paths. The decoded cube is cached per id in a process-wide
+`OnceLock<Mutex<HashMap<u16, Arc<HaldLut>>>>`; a film load failure is ignored
+(falls back to no LUT) because all bundled PNGs are compile-time embedded, and a
+`HaldLut` is shared by preview, thumbnails and export.
 
 Two decode paths:
 
@@ -296,8 +312,9 @@ None of this is wired into the UI yet (see 8).
 3. **Export re-decodes + re-develops the source from scratch.** The app does not keep
    the full-res base in memory between preview and export (deliberate trade, see 1).
    For multiple exports of the same image this repeats decoding work. Each export
-   also writes `<name>.emulsion.json` (source path + `PipelineParams`); a failed
-   sidecar write is reported in the status line but does not invalidate the image.
+   also writes `<name>.emulsion.json` (source path + `PipelineParams` + film name);
+   a failed sidecar write is reported in the status line but does not invalidate
+   the image.
 4. **`rotate_fine` extra**: fine angle is bilinear with **white fill** outside the
    source — corners become white. Straighten-then-crop is the natural workflow and
    crop is applied *before* rotation, so the UI should offer crop before fine angle.
@@ -324,6 +341,17 @@ None of this is wired into the UI yet (see 8).
     stretch into a params-level op with a per-channel white point. The robust
     percentile change already removes the outage/crush symptom; this is the seam to
     revisit if the sliders ever need to show the scan's floor.
+11. **Film simulations are bundled and fixed.** `params.film` is an index into the
+    build-generated registry, not a stable name: adding/reordering LUT files can
+    renumber it. Sidecars (and eventually patches) should migrate by `film_name`.
+    The LUTs are level 6 (36³) after resampling from the source level 12 (144³) to
+    keep the binary/repo ~18 MB; trilinear interpolation hides most of the loss,
+    but very smooth gradients can show faint banding. There is no user LUT import.
+12. **Film strip previews apply the current non-film params** to a ≤160 px base and
+    are regenerated when those params or the source change. Cards are generated
+    lazily (`show_viewport`) with two cards of preload beyond each edge, so a large
+    result set costs only the visible textures at a time. The strip is horizontal
+    only, so the mouse wheel scrolls it sideways without Shift.
 
 ---
 
@@ -358,9 +386,10 @@ managed-runtime (Java/Kotlin) reviewer's perspective.
 
 ## 10. Verification
 
-- `cargo test` — 26 core unit tests (every op + serde roundtrip + sidecar JSON +
-  demosaic shape + downscale + develop-invert integration + post-invert
-  exposure/WB direction + contrast/saturation response).
+- `cargo test` — 32 core unit tests (every op + serde roundtrip + sidecar JSON +
+  Hald identity/geometry + film registry + B&W desaturation + demosaic shape +
+  downscale + develop-invert integration + post-invert exposure/WB direction +
+  contrast/saturation response).
 - `cargo fmt`, `cargo clippy` — `fmt` clean; clippy emits style suggestions only.
 - Manual smoke: `cargo build --release && target\release\emulsion-app.exe` — open
   a folder with ORF/ARW files, click a file, drag sliders, `Export…`.

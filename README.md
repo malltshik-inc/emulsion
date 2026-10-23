@@ -12,6 +12,8 @@ target\release\emulsion-app.exe
 
 - **Open folder…** → all images in it (recursive)
 - Click an image → live preview; each file keeps its own settings
+- Film simulations: searchable strip of bundled colour + B&W Hald CLUTs
+  (RawTherapee collection; attribution in `emulsion-core/assets/film/`)
 - Five sliders (white balance, tint, EV, contrast, saturation), invert, rotate 90° + fine angle
 - Double-click a slider to reset it
 - Wheel-zoom, drag-pan, Space to recenter.

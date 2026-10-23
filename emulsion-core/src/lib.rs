@@ -3,6 +3,7 @@ pub mod decode;
 pub mod demosaic;
 pub mod error;
 pub mod export;
+pub mod film;
 pub mod geometry;
 pub mod image;
 pub mod params;

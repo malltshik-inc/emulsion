@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::{
     error::{CoreError, Result},
+    film,
     image::RgbaImage,
     params::PipelineParams,
 };
@@ -32,6 +33,8 @@ struct Sidecar<'a> {
     format: &'static str,
     source: &'a str,
     params: &'a PipelineParams,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    film_name: Option<&'static str>,
 }
 
 pub fn save_sidecar(path: &str, source: &str, params: &PipelineParams) -> Result<()> {
@@ -39,6 +42,7 @@ pub fn save_sidecar(path: &str, source: &str, params: &PipelineParams) -> Result
         format: "emulsion-params-v1",
         source,
         params,
+        film_name: params.film.and_then(film::name),
     };
     let json = serde_json::to_string_pretty(&sidecar)
         .map_err(|e| CoreError::Internal(format!("sidecar json: {}", e)))?;
@@ -55,7 +59,7 @@ pub fn save_jpeg(path: &str, img: &RgbaImage, quality: u8) -> Result<()> {
     dimg.write_with_encoder(encoder)
         .map_err(|e| CoreError::Io(format!("jpeg: {}", e)))?;
     let f = std::fs::File::create(path)
-        .map_err(|e| CoreError::Io(format!("cannot create {}: {}", path, e).into()))?;
+        .map_err(|e| CoreError::Io(format!("cannot create {}: {}", path, e)))?;
     let mut buf = BufWriter::new(f);
     buf.write_all(&bytes)
         .map_err(|e| CoreError::Io(format!("write: {}", e)))?;

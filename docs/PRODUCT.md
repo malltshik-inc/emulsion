@@ -46,11 +46,14 @@ Three-zone window:
 - **Canvas (center):** shows the current result, fit to the window by default.
   Zoom with the mouse wheel. Pan by dragging with the left button or middle button.
   Press **Space** to recenter the image.
-- **Tools (right):** the controls that change the image, grouped into collapsible
-  sections (Color, Convert, Rotate). Each control shows a title first, then its
-  slider with the numeric value beside it. The R/G/B black-point sliders are
-  hidden in the v1 UI (the params and automatic baseline still apply); there is no
-  filter box.
+- **Tools (top strip):** the controls that change the image, as toggle tabs
+  (Develop, Simulations, Crop, Rotate, White Balance, Tint, Exposure, Contrast, Saturation).
+  Simulations, Crop, Rotate, White Balance, Tint, Exposure, Contrast and Saturation expand
+  their panels below the strip; **Develop toggles negative→positive immediately without opening a panel**.
+  Each slider shows a title first, then its rail with the numeric value beside it. The R/G/B black-point
+  sliders are hidden in the v1 UI (the params and automatic baseline still apply).
+  The Simulations panel puts a search box in its header and adds a strip of film
+  simulations that scrolls horizontally with the mouse wheel.
 
 Supporting structure:
 
@@ -66,8 +69,7 @@ Supporting structure:
   via the same path, but are not a v1 release gate and must not degrade ORF.
 - MUST show a clear "loading" state while a RAW decodes.
 - A file never edited in this session starts from **neutral settings** (see §7
-  defaults), with "negative → positive" off. The user enables it when editing a
-  negative. Each file keeps its own settings: switching away and back restores them
+  defaults), with Develop off. The user enables it when editing a negative. Each file keeps its own settings: switching away and back restores them
   (session-scoped; see §10).
 
 ## 6. File browser (MUST)
@@ -86,7 +88,7 @@ Supporting structure:
 
 ## 7. Controls (MUST — the complete v1 set)
 
-Exactly these controls. No curve editor, no HSL, no channels panel, no profiles in v1.
+Exactly these controls. No curve editor, no HSL, no channels panel, no LUT import in v1.
 
 Color sliders (five visible in the v1 UI):
 
@@ -99,18 +101,24 @@ Color sliders (five visible in the v1 UI):
 7. **Black point G** (0..1) — param only; slider hidden in the v1 UI
 8. **Black point B** (0..1) — param only; slider hidden in the v1 UI
 
-Convert:
+Film:
 
-9. **Negative → positive** (checkbox/switch)
+9. **Develop** (toggle) — the negative→positive base conversion
+10. **Simulations** — a bundled Hald CLUT chosen from a horizontal strip.
+    The strip contains every black-and-white and colour simulation from the
+    RawTherapee Film Simulation collection (bundle licence in
+    `emulsion-core/assets/film/ATTRIBUTION.md`). A search box in the header
+    filters by name; the mouse wheel scrolls the strip. "No simulation" (the
+    default) applies none. The LUT runs last, after contrast and saturation.
 
 Rotate:
 
-10. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
-11. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
+11. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
+12. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
 
 Defaults (MUST be identical on every fresh open): temperature 0, tint 0, exposure 0,
-contrast 0, saturation 0, all black points 0, negative→positive **off**, rotation 0,
-angle 0, no crop.
+contrast 0, saturation 0, no film simulation, all black points 0, Develop **off**,
+rotation 0, angle 0, no crop.
 
 Behavior requirements (MUST):
 
@@ -148,7 +156,7 @@ automatic baseline is still computed and applied.
 ## 10. Settings as data (MUST)
 
 The user's entire edit is a single value: the visible sliders (plus the hidden
-black-point params), invert, rotate, angle, crop.
+black-point params), invert, the selected film simulation, rotate, angle, crop.
 This value MUST:
 
 - be loadable/savable as a small text file (the **patch**), which is only the settings
@@ -174,9 +182,10 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
   pre-fills the **source file stem** (e.g. `P6030011.png` for `P6030011.ORF`).
 - MUST never touch the original file.
 - After a successful save, writes a sidecar next to the export
-  (`<name>.emulsion.json`) containing the source path and the exact
-  `PipelineParams` used, format `emulsion-params-v1`. This is for reproduction
-  and taste analysis; it is not the patch autosave.
+  (`<name>.emulsion.json`) containing the source path, the exact `PipelineParams`
+  used and, when a film simulation was selected, its name. Format
+  `emulsion-params-v1`. This is for reproduction and taste analysis; it is not
+  the patch autosave.
 - After export, the status line states the result (success and path, or error).
 
 ## 12. Performance (MUST)
@@ -196,6 +205,7 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 - Crop **tool** in the UI (marquee + handles + aspect lock) — mechanism exists, tool
   is next.
 - Patch-file autosave/restore and preset management in the UI.
+- Importing user-supplied `.cube`/Hald LUTs (the bundled film strip is v1).
 - Undo UI beyond in-memory history.
 - 100%-zoom pixel peeping view.
 - 16-bit pipeline and TIFF export.
@@ -206,20 +216,23 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 
 - No destructive editing, no "save over source", no autosave of pixels.
 - No catalog/database, no keywords, no face detection, no "AI" features.
-- No curve editor/HSL/color profiles in v1 (see §7: exactly the listed controls).
+- No curve editor/HSL/user LUT import in v1 (see §7: the bundled film
+  simulations are the only profiles).
 - No network access, no telemetry.
 
 ## 15. Acceptance checklist (how v1 is known done)
 
 - [ ] Open a folder with mixed images (JPEG/PNG/TIFF/ORF); all appear; ORF opens with
       a visible loading state.
-- [ ] With a color-negative ORF: select it, flip "Negative → positive" → the result
+- [ ] With a color-negative ORF: select it, flip Develop → the result
       looks like a correct positive with a single click; every visible slider
       visibly pushes the image in the labeled direction.
 - [ ] A user who opens a scan on the owner's hardware reaches a satisfying positive in
       **three interactions or fewer** (open, invert, one slider).
 - [ ] Every control update re-renders without pressing apply; 24 MP stays interactive;
       64 MP opens and remains usable.
+- [ ] Film strip lists every bundled simulation, search narrows it by name, and
+      picking one updates the preview, thumbnails and export.
 - [ ] 90° + fine angle + crop combine correctly and match the export.
 - [ ] Export JPEG (with quality) and PNG at full resolution; original byte-for-byte
       untouched (verified by file hash before/after).
