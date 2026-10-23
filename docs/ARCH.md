@@ -41,14 +41,14 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point; re-exports public types |
 | `params.rs` | `PipelineParams` + `CropRect` — serde `Serialize/Deserialize`, `Default` impl |
 | `image.rs` | `RgbaImage` (RGBA8 interleaved `Vec<u8>`) and `LinearImage` (flat RGB interleaved `Vec<f32>`), both `(width, height, data)` |
-| `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear) |
-| `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale |
+| `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `is_supported(path)` is the shared extension filter |
+| `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
 | `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
 | `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `downscale` (box average) |
-| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→exposure→black-point→invert→crop/rotate→sRGB) |
-| `export.rs` | `save_png`, `save_jpeg` (quality 1..100) |
+| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate → invert+exposure → contrast/saturation) |
+| `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params) |
 | `error.rs` | `CoreError`, `Result<T>` = `std::result::Result<T, CoreError>` |
-| `tests.rs` | 19 unit tests, one per op (incl. robust-bounds outlier tests) |
+| `tests.rs` | 26 unit tests, one per op (incl. robust-bounds, inversion and sidecar tests) |
 
 ### emulsion-app (`emulsion-app/src/main.rs`)
 
@@ -61,18 +61,28 @@ State held by `EmulsionApp`:
 | `folder`, `files`, `cursor` | flat recursive image list of the opened folder |
 | `loaded: Option<Loaded>` | preview base (`LinearImage`, downscaled to ≤1800 px longest edge) |
 | `load_rx` | mpsc `Receiver` for the background decode result |
+| `thumb_bases`, `thumb_textures` | per-file ≤96 px thumbnail base + its egui texture (one per row) |
+| `thumb_rx`, `thumb_cancel`, `thumb_generation` | background thumbnail worker channel + cancel flag + stale-result guard |
 | `params: PipelineParams` | the live editing state ("the patch") |
-| `search: String` | tools-panel filter box text |
+| `settings: HashMap<String, PipelineParams>` | per-file settings for the session, keyed by path |
 | `texture`, `texture_size` | egui GPU texture of the developed preview |
 | `zoom`, `pan` | canvas transform |
-| `status`, `dirty` | status line + re-render flag |
+| `status`, `dirty` | status line + re-render flag; `thumbs_dirty` rebuilds row thumbnails |
+
+`EmulsionApp::new` calls `ctx.set_zoom_factor(1.2)` — the size previously reached
+with two `Ctrl+=` presses — so fonts and widgets start ~20% larger.
 
 Workflow in `App::ui` each frame:
-1. `poll_load()` — drain the decode channel if done.
-2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture.
-3. Build panels (top bar, left file list, right tools, bottom status, central canvas);
+1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
+2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`.
+3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` each cached thumbnail base with that file's params (the selected row uses the live `params`) and upload it.
+4. Build panels (top bar, left file list, right tools, bottom status, central canvas);
    each panel calls its own method on `self` (keeps the egui closures single-capture).
-4. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom / drag-pan (left or middle button). The file panel reuses the same texture, painted small, as its selection preview.
+5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders one row per file (thumbnail + basename) from the thumbnail cache; no separate preview pane.
+
+Selecting a row calls `select_file`: it stores the current `params` under the old
+path, then loads the new path's stored params (`PipelineParams::default()` if the
+file was never edited) before starting the background decode.
 
 ---
 
@@ -83,14 +93,17 @@ source
   └ decode()                     rawler demosaic (ORF…) or image |→ sRGB-degamma → linear 0..1
       └ demosaic_bilinear        bayer → RGB; robust percentile auto-scale to *measured* range
           └ develop()            [interactive path, re-runs on every param edit]
-              WB gains           temperature/tint → per-channel multiply
-              exposure           2^EV multiply
-              black point ×3     (v - bp) / (1 - bp), clamped [0, 0.98]
-              invert             1 − v   (negative → positive)
+              WB gains           temperature/tint → per-channel multiply (positive path only)
+              black point ×3     (v - bp) / (1 - bp), clamped [0, 0.98]  (pre-invert: kills the orange mask)
               crop               fractional rect  (params.crop)
               rotate 90°         u8 0..3 quarter turns
               fine angle         bilinear around center, white fill outside
-              sRGB gamma         0.00304 crossover / 12.92 / 1.055 / 2.4
+              ─ encode to display values ─
+              positive           exposure (2^EV linear), then sRGB gamma
+              negative           sRGB-encode the negative, 1 − encoded, decode to
+                                 linear, ×gains×2^EV, re-encode
+              contrast           smoothstep S-curve blended by contrast/100
+              saturation         scale distance from Rec.709 luma by 1+sat/100
               quantize           round → u8, alpha 255
 ```
 
@@ -103,6 +116,10 @@ Two decode paths:
 - **Regular** (jpeg/png/tif): `image::ImageReader::open(...).decode()` → `into_rgba8()`
   → `srgb_decode` per sample → linear. TIFF is read as its 8-bit decode.
 
+The app's folder scan uses `decode::is_supported`, so every format the decoder
+accepts is listed. Add new RAW extensions only to `RAW_EXTENSIONS` in `decode.rs`
+(a local app-side list once hid ARW files).
+
 ### Why measured auto-scale (the "a-ha" core)
 
 The spike measured the owner's Olympus E-M5 Mark II high-res ORFs (9280×6932):
@@ -114,7 +131,10 @@ makes the tool "just work" on dark scans, and the R/G/B black-point sliders give
 user manual control on top.
 
 Since v0.1 the measured bounds are **robust percentiles** (0.25% / 99.75% per
-channel, stride-sampled and sorted — `robust_bounds`), not raw min/max. A raw min/max
+channel, sampled on a 2D grid with a step coprime to the CFA period and sorted —
+`robust_bounds`), not raw min/max. An earlier flattened-index stride was a
+multiple of the 2×2 pattern period: it sampled only one colour, left the other
+channels' bounds at 0..1, and made ARW negatives flood blue/yellow. A raw min/max
 lets one hot or dead pixel stretch a channel's whole range, crushing everything else
 into a dark sliver: the "image needs +0.8..+0.9 EV" and "shadows are pure black with
 Bayer artifacts" symptom. The percentile bounds ignore a handful of outliers. The
@@ -122,6 +142,17 @@ auto stretch is baked into the demosaic's output, so the black-point sliders sta
 0 meaning "auto baseline already applied"; surfacing the baseline as non-zero slider
 starts would require the stretch to live in a params-level op with a per-channel
 white point, which is not done yet (see Limitation 10).
+
+### Negative inversion happens after the sRGB encode
+
+A negative's transmittance is roughly `10^-density`, so inverting the linear
+values before the gamma encode lifts the midtones and flattens the print — the
+"pale and too bright" look, and why −EV alone only made it grey. `develop` now
+inverts the sRGB-encoded negative (`1 − encode(t)`) and applies WB/exposure to
+the decoded positive afterwards. This keeps blacks black and gives the sliders
+positive semantics (+EV brightens, +temperature warms). It is still a plain
+per-channel inversion: a film toe/shoulder curve and saturation recovery are not
+implemented yet (see TODO).
 
 ---
 
@@ -170,22 +201,22 @@ ScrollArea::both().show(ui, |ui| …)  → ScrollAreaOutput<R> with .inner: R
 ui.take_available_space()  — REQUIRED inside side panels to make them resizable
 CollapsingHeader::new("Title").default_open(true).open(Some(true)|None).show(ui, |ui| …)
 ui.collapsing("Title", |ui| …)  — starts collapsed
-ui.text_edit_singleline(&mut String)  — TextEdit::singleline(..).hint_text(..).desired_width(..).show(ui)
 ui.button("…").clicked(), ui.checkbox(&mut bool, "…").changed(), ui.heading(…), ui.label(…)
-Slider::new(&mut f32, -100.0..=100.0).text("…").changed()
+Slider::new(&mut f32, -100.0..=100.0).changed()  — value is shown by default; `.text(…)` adds an inline label
+ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(80.0)  — let the rail fill the tools panel
+Slider senses only drags → Response::double_clicked() is always false; detect reset via
+i.pointer.button_double_clicked(Primary) + interact_pos() inside the rail rect (param_slider)
 ui.horizontal(|ui| …)  — row layout
 ColorImage::from_rgba_unmultiplied([w,h], &rgba) → ctx.load_texture(name, image, TextureOptions::LINEAR) → TextureHandle
 handle.set(image, opts)   — cheap re-upload; TextureHandle Clone is ref-counted (cheap)
-ui.allocate_painter(size, Sense::hover()) → (response, painter)
+ui.allocate_painter(size, Sense::hover()/click()/click_and_drag()) → (response, painter)
 painter.image(tex.id(), rect, full_uv, Color32::WHITE)
 painter.rect_filled(response.rect, 0.0, color); painter.text(pos, Align2::LEFT_TOP, s, FontId::proportional(13.0), Color32::WHITE)
 ui.input(|i| i.smooth_scroll_delta().y)             — wheel
-ui.input(|i| i.pointer.primary_down() || …middle_down()) ; i.pointer.delta()   — pan is the LEFT button now
+i.pointer.delta() with response.is_pointer_button_down_on() — pan only when the press started on the canvas
 ui.ctx().request_repaint()
 Vec2: fields .x/.y (NOT .0/.1); Vec2::ZERO; operators + - * work; self.pan += delta works
 ```
-Case-insensitive substring search has **no `String::contains`** in this stdlib —
-use `hay.to_lowercase().as_str().match_indices(needle.to_lowercase().as_str()).next().is_some()`.
 Native bits: `rfd::FileDialog::new().pick_folder()/.save_file()/.add_filter(name, &["ext"]).set_directory(&path).set_file_name(…)`,
 `std::fs::read_dir(path) -> iterator of Result<DirEntry>` (recursive walk lives in the app),
 `std::thread::spawn(move || …)` with `std::sync::mpsc::channel()` + `Receiver::try_recv()` for non-blocking decode.
@@ -264,7 +295,9 @@ None of this is wired into the UI yet (see 8).
    the full-res source. There is no full-res "100% pixel peep" view yet.
 3. **Export re-decodes + re-develops the source from scratch.** The app does not keep
    the full-res base in memory between preview and export (deliberate trade, see 1).
-   For multiple exports of the same image this repeats decoding work.
+   For multiple exports of the same image this repeats decoding work. Each export
+   also writes `<name>.emulsion.json` (source path + `PipelineParams`); a failed
+   sidecar write is reported in the status line but does not invalidate the image.
 4. **`rotate_fine` extra**: fine angle is bilinear with **white fill** outside the
    source — corners become white. Straighten-then-crop is the natural workflow and
    crop is applied *before* rotation, so the UI should offer crop before fine angle.
@@ -281,8 +314,6 @@ None of this is wired into the UI yet (see 8).
      already implemented
    - undo history (params stack)
    - patch-file autosave/restore and presets
-   - thumbnails in the file list (a selection preview pane exists in the left panel;
-     per-file thumbnails are still not)
    - persist last folder / last export settings (OS config JSON, per PRODUCT.md)
 9. **App is intentionally single-file.** It will be split into modules only when the
    file list/canvas/tools each earn their own file (see `METHODS.md`: prefer the
@@ -327,10 +358,11 @@ managed-runtime (Java/Kotlin) reviewer's perspective.
 
 ## 10. Verification
 
-- `cargo test` — 19 core unit tests (every op + serde roundtrip + demosaic shape +
-  downscale + develop-invert integration).
-- `cargo fmt`, `cargo clippy` — both clean (clippy emits style suggestions only).
+- `cargo test` — 26 core unit tests (every op + serde roundtrip + sidecar JSON +
+  demosaic shape + downscale + develop-invert integration + post-invert
+  exposure/WB direction + contrast/saturation response).
+- `cargo fmt`, `cargo clippy` — `fmt` clean; clippy emits style suggestions only.
 - Manual smoke: `cargo build --release && target\release\emulsion-app.exe` — open
-  `emulsion-core\examples\orf`, click an ORF, drag sliders, `Export…`.
-- Spike baseline: `target\release\develop.exe <in.orf> <out.png> [--invert]` matches
+  a folder with ORF/ARW files, click a file, drag sliders, `Export…`.
+- Spike baseline: `target\release\develop.exe <in.orf> <out.png> [--invert] [--ev N] [--contrast N] [--saturation N]` matches
   the PNG `emulsion-core\examples\orf` chrome (ignored by git).

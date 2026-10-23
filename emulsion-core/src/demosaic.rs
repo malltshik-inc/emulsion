@@ -15,21 +15,26 @@ const MAX_BOUND_SAMPLES: usize = 262_144;
 /// range, crushing everything else into a dark sliver (and, after inversion,
 /// turning the shadows pure black). Percentiles make the measured auto-scale
 /// immune to a handful of outliers while keeping the "stretch the scan to the
-/// full visible range" behaviour. The full buffer is stride-sampled so the
-/// sort stays bounded on 64 MP sources.
+/// full visible range" behaviour.
+///
+/// Sampling walks a 2D grid with a step coprime to the CFA period (2x2 Bayer,
+/// 6x6 X-Trans), so every colour is represented. A flattened index stride can
+/// be a multiple of the pattern period and silently sample one colour only,
+/// which leaves that channel's bounds at 0..1 and floods the result with one
+/// primary (the ARW "yellow positive / blue negative" bug).
 pub fn robust_bounds(
     width: usize,
     height: usize,
     bayer: &[u16],
     cfa: &CFA,
 ) -> ([f32; 3], [f32; 3]) {
-    let stride = (width * height / MAX_BOUND_SAMPLES).max(1);
+    let mut step = (((width * height) as f32 / MAX_BOUND_SAMPLES as f32).sqrt() as usize).max(1);
+    while step.is_multiple_of(2) || step.is_multiple_of(3) {
+        step += 1;
+    }
     let mut samples = [vec![0_u16; 0], vec![0_u16; 0], vec![0_u16; 0]];
-    for y in 0..height {
-        for x in 0..width {
-            if (y * width + x) % stride != 0 {
-                continue;
-            }
+    for y in (0..height).step_by(step) {
+        for x in (0..width).step_by(step) {
             let c = cfa.color_at(y, x);
             samples[c].push(bayer[y * width + x]);
         }

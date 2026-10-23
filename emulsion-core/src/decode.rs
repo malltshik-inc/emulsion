@@ -12,14 +12,17 @@ const RAW_EXTENSIONS: [&str; 16] = [
     ".mrw", ".mos", ".dcr", ".iiq",
 ];
 
+const REGULAR_EXTENSIONS: [&str; 5] = [".jpg", ".jpeg", ".png", ".tif", ".tiff"];
+
 fn is_raw_file(path: &str) -> bool {
     let lower = path.to_lowercase();
-    for e in &RAW_EXTENSIONS {
-        if lower.ends_with(*e) {
-            return true;
-        }
-    }
-    false
+    RAW_EXTENSIONS.iter().any(|e| lower.ends_with(*e))
+}
+
+/// True when `decode` knows how to open `path` (RAW or JPEG/PNG/TIFF).
+pub fn is_supported(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    is_raw_file(path) || REGULAR_EXTENSIONS.iter().any(|e| lower.ends_with(*e))
 }
 
 // Inverse sRGB (encoded [0,1] -> linear-light).

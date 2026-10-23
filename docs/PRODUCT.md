@@ -45,9 +45,12 @@ Three-zone window:
   the opened folder. Clicking an image opens it.
 - **Canvas (center):** shows the current result, fit to the window by default.
   Zoom with the mouse wheel. Pan by dragging with the left button or middle button.
+  Press **Space** to recenter the image.
 - **Tools (right):** the controls that change the image, grouped into collapsible
-  sections (Color, Convert, Rotate) with a filter box that narrows the visible
-  controls as you type.
+  sections (Color, Convert, Rotate). Each control shows a title first, then its
+  slider with the numeric value beside it. The R/G/B black-point sliders are
+  hidden in the v1 UI (the params and automatic baseline still apply); there is no
+  filter box.
 
 Supporting structure:
 
@@ -62,49 +65,60 @@ Supporting structure:
 - Other camera RAW formats (NEF, CR2/3, ARW, RW2, RAF, DNG, …) should be supported
   via the same path, but are not a v1 release gate and must not degrade ORF.
 - MUST show a clear "loading" state while a RAW decodes.
-- A new image starts from **neutral settings** (see §7 defaults), with "negative →
-  positive" off. The user enables it when editing a negative.
+- A file never edited in this session starts from **neutral settings** (see §7
+  defaults), with "negative → positive" off. The user enables it when editing a
+  negative. Each file keeps its own settings: switching away and back restores them
+  (session-scoped; see §10).
 
 ## 6. File browser (MUST)
 
 - MUST list images recursively under the chosen folder, sorted by name.
 - MUST be reachable via `Open folder…`, which lives inside the file browser panel
   and uses the platform's native folder picker.
-- MUST show a preview of the currently selected image in the panel, reflecting the
-  current settings.
-- SHOULD show thumbnails in the list itself (deferred; see §13).
+- MUST show a small thumbnail per file in the list (decoded in the background; a
+  placeholder until it is ready). There is no separate selection preview pane.
+- MUST list every decodable format (all RAW extensions the decoder accepts, plus
+  JPEG/PNG/TIFF) - an ARW next to an ORF must be visible.
 - MUST NOT modify, move or delete any file.
+- MUST remember each file's settings for the session: selecting another file loads
+  that file's settings (neutral if untouched), and thumbnails reflect each file's own
+  settings while the selected file shows live edits.
 
 ## 7. Controls (MUST — the complete v1 set)
 
-Exactly these controls. No curves, no HSL, no channels panel, no profiles in v1.
+Exactly these controls. No curve editor, no HSL, no channels panel, no profiles in v1.
 
-Color sliders (six):
+Color sliders (five visible in the v1 UI):
 
 1. **White balance — temperature** (range −100..+100; 0 = neutral, + = warmer)
 2. **White balance — tint** (range −100..+100; 0 = neutral, + = magenta)
 3. **Exposure** (range −3..+3 EV)
-4. **Black point R** (0..1)
-5. **Black point G** (0..1)
-6. **Black point B** (0..1)
+4. **Contrast** (range −100..+100; 0 = neutral, + = punchier, − = flatter)
+5. **Saturation** (range −100..+100; 0 = neutral, − = greyscale, + = more colour)
+6. **Black point R** (0..1) — param only; slider hidden in the v1 UI
+7. **Black point G** (0..1) — param only; slider hidden in the v1 UI
+8. **Black point B** (0..1) — param only; slider hidden in the v1 UI
 
 Convert:
 
-7. **Negative → positive** (checkbox/switch)
+9. **Negative → positive** (checkbox/switch)
 
 Rotate:
 
-8. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
-9. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
+10. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
+11. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
 
 Defaults (MUST be identical on every fresh open): temperature 0, tint 0, exposure 0,
-all black points 0, negative→positive **off**, rotation 0, angle 0, no crop.
+contrast 0, saturation 0, all black points 0, negative→positive **off**, rotation 0,
+angle 0, no crop.
 
 Behavior requirements (MUST):
 
 - Every control change re-renders the preview **immediately** (no apply button).
+- Double-clicking a slider track resets that control to its default (0).
 - 90° rotation and fine angle combine — the result is the sum of the two.
-- The six sliders and the invert switch work on the *same* image and combine.
+- The visible sliders (plus the hidden black-point params) and the invert switch
+  work on the *same* image and combine.
 - The preview reflects the final result that export will produce, at the resolution
   the canvas can show.
 
@@ -119,7 +133,8 @@ sensor's range MUST be stretched to the full visible range automatically; a slid
 adjusts that per channel. The automatic stretch MUST be robust to stray hot/dead
 pixels — a handful of outlying samples must not be allowed to crush the rest of the
 image into a dark sliver, and a fresh open must be close without a large exposure
-bump.
+bump. The manual R/G/B sliders are currently hidden in the v1 UI (see §7); the
+automatic baseline is still computed and applied.
 
 ## 9. Crop (MUST, v1 mechanism; UI in §13)
 
@@ -132,7 +147,8 @@ bump.
 
 ## 10. Settings as data (MUST)
 
-The user's entire edit is a single value: the six sliders, invert, rotate, angle, crop.
+The user's entire edit is a single value: the visible sliders (plus the hidden
+black-point params), invert, rotate, angle, crop.
 This value MUST:
 
 - be loadable/savable as a small text file (the **patch**), which is only the settings
@@ -140,6 +156,10 @@ This value MUST:
 - support being stored **without** the source reference (a **preset**);
 - be the unit of **undo**: each committed change toggles back to the previous value;
 - preserve nothing pixel-related.
+
+Per-file settings are the same value associated with each source path. They live
+in memory for the session (no disk autosave yet); patches/presets are the durable
+form.
 
 Undo (in-memory) is REQUIRED in v1; patch-file autosave/restore and presets are
 REQUIRED mechanisms but may be exposed in the UI later (§13).
@@ -150,8 +170,13 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 - Supported destinations: **JPEG** (with a quality control, 1–100, default high)
   and **PNG** (lossless, no quality control).
 - MUST export at the source resolution (real pixels, not the preview scale).
-- Uses the native save dialog; the chosen folder/file name is user's.
+- Uses the native save dialog; the chosen folder/file name is user's. The dialog
+  pre-fills the **source file stem** (e.g. `P6030011.png` for `P6030011.ORF`).
 - MUST never touch the original file.
+- After a successful save, writes a sidecar next to the export
+  (`<name>.emulsion.json`) containing the source path and the exact
+  `PipelineParams` used, format `emulsion-params-v1`. This is for reproduction
+  and taste analysis; it is not the patch autosave.
 - After export, the status line states the result (success and path, or error).
 
 ## 12. Performance (MUST)
@@ -170,7 +195,6 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 
 - Crop **tool** in the UI (marquee + handles + aspect lock) — mechanism exists, tool
   is next.
-- Thumbnails in the file browser.
 - Patch-file autosave/restore and preset management in the UI.
 - Undo UI beyond in-memory history.
 - 100%-zoom pixel peeping view.
@@ -182,7 +206,7 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 
 - No destructive editing, no "save over source", no autosave of pixels.
 - No catalog/database, no keywords, no face detection, no "AI" features.
-- No curves/HSL/color profiles in v1 (see §7: exactly the listed controls).
+- No curve editor/HSL/color profiles in v1 (see §7: exactly the listed controls).
 - No network access, no telemetry.
 
 ## 15. Acceptance checklist (how v1 is known done)
@@ -190,11 +214,10 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 - [ ] Open a folder with mixed images (JPEG/PNG/TIFF/ORF); all appear; ORF opens with
       a visible loading state.
 - [ ] With a color-negative ORF: select it, flip "Negative → positive" → the result
-      looks like a correct positive with a single click; the six sliders visibly push
-      exposure and color in the labeled direction.
+      looks like a correct positive with a single click; every visible slider
+      visibly pushes the image in the labeled direction.
 - [ ] A user who opens a scan on the owner's hardware reaches a satisfying positive in
-      **three interactions or fewer** (open, invert, one slider), and can explain what
-      the black-point sliders do.
+      **three interactions or fewer** (open, invert, one slider).
 - [ ] Every control update re-renders without pressing apply; 24 MP stays interactive;
       64 MP opens and remains usable.
 - [ ] 90° + fine angle + crop combine correctly and match the export.

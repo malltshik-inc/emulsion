@@ -11,10 +11,12 @@ target\release\emulsion-app.exe
 ```
 
 - **Open folder…** → all images in it (recursive)
-- Click an image → live preview
-- Six sliders (WB temp/tint, exposure, black point ×3), invert, rotate 90° + fine angle
-- Wheel-zoom, drag-pan.
-- **Export…** → full-res JPEG/PNG (the only write; originals never touched)
+- Click an image → live preview; each file keeps its own settings
+- Five sliders (white balance, tint, EV, contrast, saturation), invert, rotate 90° + fine angle
+- Double-click a slider to reset it
+- Wheel-zoom, drag-pan, Space to recenter.
+- **Export…** → full-res JPEG/PNG named after the source, plus a
+  `<name>.emulsion.json` sidecar with the exact settings used (originals never touched)
 
 CLI for testing/batch: `target\release\develop.exe <in.orf> <out.png> [--invert]`
 

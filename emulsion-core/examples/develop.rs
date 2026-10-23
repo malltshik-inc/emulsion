@@ -3,7 +3,7 @@ use std::env;
 use emulsion_core::export::{save_jpeg, save_png};
 use emulsion_core::params::PipelineParams;
 
-const USAGE: &str = "usage: develop <input> <output.png|output.jpg> [--invert]";
+const USAGE: &str = "usage: develop <input> <output.png|output.jpg> [--invert] [--ev N] [--contrast N] [--saturation N]";
 
 fn main() {
     let args = env::args().collect::<Vec<String>>();
@@ -13,10 +13,33 @@ fn main() {
     }
     let input = &args[1];
     let output = &args[2];
-    let invert = args.contains(&"--invert".into());
 
     let mut params = PipelineParams::default();
-    params.invert = invert;
+    let mut rest = args[3..].iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--invert" => params.invert = true,
+            "--ev" => {
+                if let Some(v) = rest.next().and_then(|v| v.parse().ok()) {
+                    params.exposure = v;
+                }
+            }
+            "--contrast" => {
+                if let Some(v) = rest.next().and_then(|v| v.parse().ok()) {
+                    params.contrast = v;
+                }
+            }
+            "--saturation" => {
+                if let Some(v) = rest.next().and_then(|v| v.parse().ok()) {
+                    params.saturation = v;
+                }
+            }
+            other => {
+                eprintln!("unknown argument: {}", other);
+                std::process::exit(2);
+            }
+        }
+    }
 
     match emulsion_core::process(input, &params) {
         Ok(img) => {

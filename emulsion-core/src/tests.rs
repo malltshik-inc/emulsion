@@ -4,8 +4,10 @@ use rayon::prelude::*;
 
 use crate::{
     colorops::{apply_black_point, apply_exposure, apply_wb, invert, wb_gains},
+    decode::is_supported,
     demosaic::demosaic_bilinear,
     demosaic::robust_bounds,
+    export::save_sidecar,
     geometry::{crop, downscale, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
@@ -25,6 +27,39 @@ fn make_img(w: usize, h: usize, fill: f32) -> LinearImage {
 fn close(a: f32, b: f32) -> bool {
     let d = if a >= b { a - b } else { b - a };
     d < 1e-4_f32
+}
+
+#[test]
+fn export_sidecar_records_source_and_params() {
+    let path = std::env::temp_dir().join("emulsion_sidecar_test.json");
+    let path = path.to_string_lossy().into_owned();
+    let params = PipelineParams {
+        invert: true,
+        exposure: 1.25,
+        contrast: 40.0,
+        saturation: 40.0,
+        ..PipelineParams::default()
+    };
+    save_sidecar(&path, r"C:\film\frame.ORF", &params).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["format"], "emulsion-params-v1");
+    assert_eq!(value["source"], r"C:\film\frame.ORF");
+    assert_eq!(value["params"]["invert"], true);
+    assert_eq!(value["params"]["exposure"], 1.25);
+    assert_eq!(value["params"]["contrast"], 40.0);
+    assert_eq!(value["params"]["saturation"], 40.0);
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn supported_extension_detection_is_case_insensitive() {
+    assert!(is_supported("P5220434.ORF"));
+    assert!(is_supported(r"C:\photos\shot.ARW"));
+    assert!(is_supported("a.nef"));
+    assert!(is_supported("a.JPG"));
+    assert!(is_supported("a.png"));
+    assert!(!is_supported("notes.txt"));
 }
 
 #[test]
@@ -191,9 +226,55 @@ fn tonemap_quantize_produces_rgba() {
 }
 
 #[test]
+fn develop_contrast_expands_or_flattens_midtones() {
+    let mut base = make_img(2, 1, 0.2);
+    base.data[3..6].fill(0.7);
+    let render = |contrast: f32| {
+        let params = PipelineParams {
+            contrast,
+            ..PipelineParams::default()
+        };
+        develop(&base, &params)
+    };
+    let neutral = render(0.0);
+    let punchy = render(100.0);
+    let flat = render(-100.0);
+
+    // Pixel 0 is the dark step, pixel 1 the bright one.
+    assert!(punchy.data[0] < neutral.data[0]);
+    assert!(punchy.data[4] > neutral.data[4]);
+    assert!(flat.data[0] > neutral.data[0]);
+    assert!(flat.data[4] < neutral.data[4]);
+}
+
+#[test]
+fn develop_saturation_scales_chroma() {
+    let mut base = make_img(1, 1, 0.0);
+    base.data[0] = 0.6;
+    base.data[1] = 0.4;
+    base.data[2] = 0.4;
+    let render = |saturation: f32| {
+        let params = PipelineParams {
+            saturation,
+            ..PipelineParams::default()
+        };
+        develop(&base, &params)
+    };
+    let spread = |img: &RgbaImage| img.data[0] as i32 - img.data[2] as i32;
+
+    let neutral = render(0.0);
+    let boost = render(100.0);
+    let gray = render(-100.0);
+    assert!(spread(&boost) > spread(&neutral));
+    assert!(spread(&gray).abs() <= 1);
+}
+
+#[test]
 fn develop_invert_produces_positive_stats() {
     // Raw-like base: dark values (what a negative under a light table looks like).
-    let mut base = make_img(4, 4, 0.05);
+    // Inversion runs after the sRGB encode, so 0.05 linear -> 0.23 encoded ->
+    // 0.77 positive (~196/255). Inverting in linear first would give ~250.
+    let base = make_img(4, 4, 0.05);
     let mut params = PipelineParams::default();
     params.invert = true;
     let out = develop(&base, &params);
@@ -204,8 +285,62 @@ fn develop_invert_produces_positive_stats() {
         .reduce(|| 0_u64, |a, b| a + b);
     let n = (out.data.len() / 4) as u64;
     let mean = sum / n;
-    assert!(mean > 200);
-    let _ = base;
+    assert!(mean > 180, "mean {}", mean);
+}
+
+#[test]
+fn develop_exposure_brightens_converted_negative() {
+    // A negative mid-tone: +EV must brighten the displayed positive, -EV darken
+    // it (exposure runs *after* inversion).
+    let base = make_img(4, 4, 0.4);
+    let mean = |exposure: f32| {
+        let mut params = PipelineParams::default();
+        params.invert = true;
+        params.exposure = exposure;
+        let out = develop(&base, &params);
+        let sum: u64 = out
+            .data
+            .par_iter()
+            .map(|b| *b as u64)
+            .reduce(|| 0_u64, |a, b| a + b);
+        sum / (out.data.len() / 4) as u64
+    };
+    let bright = mean(1.0);
+    let neutral = mean(0.0);
+    let dark = mean(-1.0);
+    assert!(
+        bright > neutral && neutral > dark,
+        "expected bright > neutral > dark, got {} / {} / {}",
+        bright,
+        neutral,
+        dark
+    );
+}
+
+#[test]
+fn develop_wb_temperature_warms_converted_negative() {
+    // WB must act on the displayed positive: + warms (R > B), - cools.
+    let base = make_img(4, 4, 0.4);
+    let rgb_mean = |temperature: f32| {
+        let params = PipelineParams {
+            invert: true,
+            wb_temperature: temperature,
+            ..PipelineParams::default()
+        };
+        let out = develop(&base, &params);
+        let mut sums = [0_u64; 3];
+        for i in (0..out.data.len()).step_by(4) {
+            for (c, sum) in sums.iter_mut().enumerate() {
+                *sum += out.data[i + c] as u64;
+            }
+        }
+        let n = (out.data.len() / 4) as u64;
+        [sums[0] / n, sums[1] / n, sums[2] / n]
+    };
+    let warm = rgb_mean(100.0);
+    let cool = rgb_mean(-100.0);
+    assert!(warm[0] > warm[2], "warm RGB {:?}", warm);
+    assert!(cool[2] > cool[0], "cool RGB {:?}", cool);
 }
 
 #[test]
@@ -234,6 +369,38 @@ fn demosaic_robust_bounds_rejects_hot_and_dead_pixels() {
     for c in 0..3 {
         assert!(lo[c] >= 3990.0 && lo[c] <= 4100.0);
         assert!(hi[c] >= 4400.0 && hi[c] <= 4600.0);
+    }
+}
+
+#[test]
+fn demosaic_robust_bounds_sample_all_cfa_colors() {
+    // 1024x1024 / 262144 = a stride of 4 used to align with the 2x2 pattern,
+    // sampling only one colour and leaving the other bounds at 0..1.
+    let w = 1024;
+    let h = 1024;
+    let cfa = rawler::CFA::new("RGGB");
+    let mut bayer = vec![0_u16; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            bayer[y * w + x] = match cfa.color_at(y, x) {
+                0 => 1000,
+                1 => 2000,
+                _ => 3000,
+            };
+        }
+    }
+    let (lo, hi) = robust_bounds(w, h, &bayer, &cfa);
+    for (c, expected) in [1000.0, 2000.0, 3000.0].iter().enumerate() {
+        assert!(
+            (lo[c] - expected).abs() <= 1.0,
+            "channel {c} lo {} != {expected}",
+            lo[c]
+        );
+        assert!(
+            (hi[c] - expected).abs() <= 1.0,
+            "channel {c} hi {} != {expected}",
+            hi[c]
+        );
     }
 }
 

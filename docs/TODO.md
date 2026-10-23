@@ -1,66 +1,102 @@
-# TODO — bugs & improvements (next session)
+# TODO - bugs & improvements (next session)
 
 Each item has the observed behaviour, the code seam, and a proposed acceptance
 criterion. Product rules: `docs/PRODUCT.md`; internals: `docs/ARCH.md`.
 
-## 1. File browser: per-file thumbnails, not paths
+## 1. TOP: negative view clips to pure white when "Develop film" is off
 
-**Bug:** the file panel shows a single "selected image" preview pane at the top
-(`emulsion-app/src/main.rs` `preview_pane`, ~line 264) and the list is just
-buttons of full paths (~line 254). We don't want the selected-image preview; we
-want a **miniature of each file in the folder** rendered inside the list entry
-instead of the path.
+**Observed (owner screenshots, `_AGP7722.ARW`, WB 80 / EV +2.25 / contrast 35 /
+saturation 35):** with **Develop film ON** the positive is good; with it **OFF**
+the canvas and thumbnail are almost pure white - no readable negative. The owner
+expects both directions to stay readable across toggles, as in RawTherapee.
 
-**Where:** `emulsion-app/src/main.rs` `file_panel` + `preview_pane`.
+**Cause:** the positive look is applied directly to the negative display.
+Exposure multiplies linear light, and the demosaic auto-scale has already put the
+film base near 1.0; +2.25 EV multiplies that to ~4.8 and every frame area clips
+to white. It is not a decode/CFA problem.
 
-**Acceptance:** open a folder with mixed JPEG/PNG/TIFF/ORF; each list row shows
-a small thumbnail (plus filename), no separate preview pane above the list.
-Thumbnails decode once per file, cached; ORF rows show a placeholder while
-decoding (don't block the UI).
+**Correct model:** sliders describe the *positive* result, so the negative view
+must show the inverse adjustment: +EV makes the negative **darker**, +contrast
+makes it **flatter**, +saturation makes it **less** chromatic, and +WB (warm)
+makes the negative **cooler**. Today all of these act on the negative as if it
+were a positive.
 
-## 2. Pan must only work on the canvas
+**Where:** `emulsion-core/src/tonemap.rs` (`develop`), `emulsion-app/src/main.rs`
+(file selection / render call).
 
-**Bug:** image drag-and-pan is triggered from anywhere — including while moving
-settings sliders. `canvas()` pans on any `primary_down() || middle_down()`
-without checking the pointer is over the canvas.
+**Proposed approach:** separate "this source is a film negative" from "display
+it inverted". Track negative-ness per file when Develop is first enabled. For a
+negative source with invert off, render the positive pipeline and invert the
+encoded result again for display (or apply the algebraic inverse per op). Do not
+zero or hide the sliders - they must still describe the positive.
 
-**Where:** `emulsion-app/src/main.rs` `canvas` (~line 420).
+**Acceptance:** with EV +2.25 / contrast +35 / saturation +35, toggling Develop
+off shows a readable negative (pavement and people visible, no white clipping)
+and toggling back reproduces the exact same positive; an ordinary positive scan
+(e.g. JPEG) is unchanged; unit tests cover the round trip.
 
-**Acceptance:** dragging in the central canvas pans; dragging sliders/buttons in
-the tools or file panels never pans. Pan only when the canvas is hovered (e.g.
-`response.hovered()` / `response.dragged()`).
+## 2. Calibrate the "Develop film" starting look (preset vs auto)
 
-## 3. Exposure slider direction is inverted
+**Observed:** on both owner scans, reaching a satisfying positive took about
+EV +0.75..+2.0, contrast +30..+60, saturation +30..+60 (the ARW screenshot
+actually sits at EV +2.25 / 35 / 35, WB 80). A neutral encoded inversion is
+readable but flat; `EV +1.25 / contrast +40 / saturation +40` on P6030011.ORF
+looked punchier but slightly bright.
 
-**Bug:** `+0.90` darkens, `-0.90` brightens. Root cause: `develop()` applies
-exposure **before** `invert()` (`emulsion-core/src/tonemap.rs`), so a gain on
-the negative looks like the opposite on the positive. PRODUCT.md §7 defines
-exposure +3..-3 EV with the natural expectation that **+ = brighter**.
+**Open question:** when Develop is enabled, should the app set suggested slider
+values (visible and editable), or keep everything at 0 and rely on the user? A
+preset is transparent and preserves slider semantics; hidden auto-tone is not.
+Do not silently bake a look into the neutral path.
 
-**Where:** `emulsion-core/src/tonemap.rs` `develop` ordering; `colorops::apply_exposure`.
+**Also consider:** auto exposure from the inverted luma distribution for very
+thin/under-exposed negatives, and whether WB needs a suggested value (the ARW
+shot used +80).
 
-**Acceptance:** with a negative flipped positive, `+exposure` makes the image
-brighter and `-exposure` darker, monotonic. (Fix by applying exposure after
-invert, or flipping the sign applied to the pre-invert negative — keep tests.)
+**Where:** `emulsion-app/src/main.rs` (Develop checkbox), `tonemap.rs`
+(`apply_look`), `params.rs`.
 
-## 4. Converted negatives too bright; shadows fall apart into black + artifacts
+**Reference:** a Gemini post-mortem the owner supplied emphasises film-base /
+percentile normalization (we already do this in `robust_bounds`), logarithmic
+density inversion, an exposure lift for under-exposed negatives, and an S-curve
+before gamma. Useful as confirmation; its LibRaw C dependency and auto-crop are
+not adopted (pure-Rust constraint, crop is deferred).
 
-**Bug:** after inversion the image is too bright; lowering exposure crushes
-shadows to pure black with artifacts around them. On the sky/tree/sakura shot,
-making the sky look realistic pushes all shadows (even slight ones) to solid
-black — yet at a brighter exposure the detail is there.
+## 3. Per-file settings are session-only
 
-**Symptoms point to:** pure linear `invert` (`1 - x`) + sRGB encode with a hard
-`clamp(0,1)` and no shoulder/toe (`emulsion-core/src/tonemap.rs`
-`tonemap_and_quantize`). The negative's bright end (positive shadows) is
-compressed by sRGB gamma and clipped, so there is no gradation to the shadows —
-they band and crush. Auto black-point stretch in decode/demosaic interacts too.
+**State:** `EmulsionApp::settings` keys params by absolute path and restores them
+on selection. Closing the app loses all edits.
 
-**Where:** `emulsion-core/src/tonemap.rs`; `emulsion-core/src/colorops.rs`.
+**Where:** `emulsion-app/src/main.rs` (`select_file`, `settings`).
 
-**Acceptance:** the sakura sky/tree shot keeps visible gradation in the darker
-tree/shadow areas while the sky reads as a realistic colour — no solid-black
-crush with artifacts on slight shadows. A core unit test drives a synthetic
-ramp through develop and asserts monotonic, non-crushed output in the shadow
-third. Likely needs a film-style tone curve (toe/shoulder) or a gentler
-inversion with headroom before sRGB encode — scope in the session before coding.
+**Acceptance:** reopening a folder restores each file's last settings (patch-file
+autosave, PRODUCT sec. 10), with a neutral fallback for files never edited.
+
+## 4. Precision wheel control for sliders (deferred)
+
+**State:** a plain hover-wheel changed slider values, but one notch moved the
+range too far (felt destructive), so it was removed. Sliders are drag + type +
+double-click reset again.
+
+**Idea:** bring wheel back only with a modifier (Ctrl+wheel = fine step,
+Shift+wheel = coarse) or with a genuine line-unit delta from
+`Event::MouseWheel`, not the point-scaled smooth delta.
+
+**Where:** `emulsion-app/src/main.rs` (`param_slider`).
+
+**Acceptance:** wheel never moves a slider without the modifier; one notch with
+the modifier is a small, predictable change (<=0.5% of the range), and the canvas
+zoom/panel scroll are unaffected.
+
+## 5. Camera colour matrix not applied
+
+**Observed:** `emulsion-core` applies no camera->sRGB transform; colour is the
+sensor/demosaic response after per-channel auto-scale. An experiment using
+`raw.xyz_to_cam` rendered black; the cause (empty matrix vs. misuse) was not
+isolated, and the rawler reference pipeline it was compared against produced
+casts/ghosting, so the experiment was shelved.
+
+**Where:** `emulsion-core/src/decode.rs`, `demosaic.rs`.
+
+**Acceptance:** if implemented, use `raw.color_matrix` (D65 entry) and prove on
+the real ORF/ARW that skin/sky do not shift hue against the current output;
+otherwise document the omission explicitly.

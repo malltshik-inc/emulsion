@@ -1,10 +1,12 @@
 use std::io::{BufWriter, Write};
 
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+use serde::Serialize;
 
 use crate::{
     error::{CoreError, Result},
     image::RgbaImage,
+    params::PipelineParams,
 };
 
 fn dynamic_image(w: u32, h: u32, data: Vec<u8>) -> Result<DynamicImage> {
@@ -20,6 +22,28 @@ pub fn save_png(path: &str, img: &RgbaImage) -> Result<()> {
     let dimg = dynamic_image(img.width as u32, img.height as u32, img.data.clone())?;
     dimg.save_with_format(path, ImageFormat::Png)
         .map_err(|e| CoreError::Io(format!("png: {}", e)))?;
+    Ok(())
+}
+
+/// Sidecar written next to an export: the exact settings used to develop it,
+/// so a conversion can be reproduced and analysed later.
+#[derive(Serialize)]
+struct Sidecar<'a> {
+    format: &'static str,
+    source: &'a str,
+    params: &'a PipelineParams,
+}
+
+pub fn save_sidecar(path: &str, source: &str, params: &PipelineParams) -> Result<()> {
+    let sidecar = Sidecar {
+        format: "emulsion-params-v1",
+        source,
+        params,
+    };
+    let json = serde_json::to_string_pretty(&sidecar)
+        .map_err(|e| CoreError::Internal(format!("sidecar json: {}", e)))?;
+    std::fs::write(path, json)
+        .map_err(|e| CoreError::Io(format!("cannot create {}: {}", path, e)))?;
     Ok(())
 }
 

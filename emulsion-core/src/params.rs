@@ -19,6 +19,10 @@ pub struct PipelineParams {
     pub wb_tint: f32,
     /// Exposure in EV, -3.0..+3.0
     pub exposure: f32,
+    /// Contrast, -100..100 (0 = neutral, + = punchier, - = flatter)
+    pub contrast: f32,
+    /// Saturation, -100..100 (0 = neutral, - = greyscale, + = more saturated)
+    pub saturation: f32,
     /// Per-channel black point, 0.0..1.0
     pub black_point: [f32; 3],
     /// negative -> positive flip
@@ -36,6 +40,8 @@ impl Default for PipelineParams {
             wb_temperature: 0.0,
             wb_tint: 0.0,
             exposure: 0.0,
+            contrast: 0.0,
+            saturation: 0.0,
             black_point: [0.0, 0.0, 0.0],
             invert: false,
             rotate_90: 0,

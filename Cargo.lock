@@ -1148,6 +1148,7 @@ dependencies = [
  "eframe",
  "egui",
  "emulsion-core",
+ "image",
  "rfd",
 ]
 
