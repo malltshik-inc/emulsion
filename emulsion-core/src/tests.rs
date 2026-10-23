@@ -9,7 +9,7 @@ use crate::{
     demosaic::robust_bounds,
     export::save_sidecar,
     film::{self, Category, HaldLut},
-    geometry::{crop, downscale, rotate_90, rotate_fine},
+    geometry::{crop, downscale, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
     tonemap::{develop, tonemap_and_quantize},
@@ -219,6 +219,19 @@ fn rotate_fine_90_keeps_center_whites_corners() {
 }
 
 #[test]
+fn flip_horizontal_mirrors_columns() {
+    let mut img = LinearImage::new(3, 1);
+    img.set_px(0, 0, 1.0, 0.0, 0.0);
+    img.set_px(1, 0, 0.0, 1.0, 0.0);
+    img.set_px(2, 0, 0.0, 0.0, 1.0);
+    let f = flip_horizontal(&img);
+    let (r, g, b) = f.px(0, 0);
+    assert!(close(r, 0.0) && close(g, 0.0) && close(b, 1.0));
+    let (r, g, b) = f.px(2, 0);
+    assert!(close(r, 1.0) && close(g, 0.0) && close(b, 0.0));
+}
+
+#[test]
 fn tonemap_quantize_produces_rgba() {
     let mut img = LinearImage::new(2, 2);
     img.set_px(0, 0, 0.0, 0.5, 1.0);
@@ -271,6 +284,80 @@ fn develop_saturation_scales_chroma() {
     let gray = render(-100.0);
     assert!(spread(&boost) > spread(&neutral));
     assert!(spread(&gray).abs() <= 1);
+}
+
+#[test]
+fn develop_shadows_lifts_and_lowers_darks() {
+    let base = make_img(4, 4, 0.05);
+    let mean = |shadows: f32| {
+        let params = PipelineParams {
+            shadows,
+            ..PipelineParams::default()
+        };
+        let out = develop(&base, &params);
+        let sum: u64 = out
+            .data
+            .par_iter()
+            .map(|b| *b as u64)
+            .reduce(|| 0_u64, |a, b| a + b);
+        sum / (out.data.len() / 4) as u64
+    };
+    let lifted = mean(100.0);
+    let neutral = mean(0.0);
+    let lowered = mean(-100.0);
+    assert!(
+        lifted > neutral && neutral > lowered,
+        "expected lifted > neutral > lowered, got {} / {} / {}",
+        lifted,
+        neutral,
+        lowered
+    );
+}
+
+#[test]
+fn develop_highlights_raises_and_lowers_brights() {
+    let base = make_img(4, 4, 0.8);
+    let mean = |highlights: f32| {
+        let params = PipelineParams {
+            highlights,
+            ..PipelineParams::default()
+        };
+        let out = develop(&base, &params);
+        let sum: u64 = out
+            .data
+            .par_iter()
+            .map(|b| *b as u64)
+            .reduce(|| 0_u64, |a, b| a + b);
+        sum / (out.data.len() / 4) as u64
+    };
+    let up = mean(100.0);
+    let neutral = mean(0.0);
+    let down = mean(-100.0);
+    assert!(
+        up > neutral && neutral > down,
+        "expected up > neutral > down, got {} / {} / {}",
+        up,
+        neutral,
+        down
+    );
+}
+
+#[test]
+fn develop_vignette_darkens_corners_more_than_center() {
+    let base = make_img(9, 9, 0.6);
+    let params = PipelineParams {
+        vignette: 100.0,
+        ..PipelineParams::default()
+    };
+    let out = develop(&base, &params);
+    let center = out.data[(4 * 9 + 4) * 4];
+    let corner = out.data[0];
+    assert!(
+        corner < center,
+        "corner {} not darker than center {}",
+        corner,
+        center
+    );
 }
 
 #[test]
@@ -349,6 +436,44 @@ fn develop_wb_temperature_warms_converted_negative() {
     let cool = rgb_mean(-100.0);
     assert!(warm[0] > warm[2], "warm RGB {:?}", warm);
     assert!(cool[2] > cool[0], "cool RGB {:?}", cool);
+}
+
+#[test]
+fn develop_defaults_apply_conversion_baseline() {
+    // The negative -> positive conversion has a built-in baseline (EV +1.4,
+    // WB +80, contrast +82, saturation +20). Neutral params must convert a
+    // mid-grey scan to the tuned baseline look, not to a flat/dark result.
+    let base = make_img(4, 4, 0.3);
+    let out = develop(
+        &base,
+        &PipelineParams {
+            invert: true,
+            ..PipelineParams::default()
+        },
+    );
+    assert_eq!(&out.data[..4], &[205, 180, 148, 255]);
+
+    // Cancelling the baseline must be visibly different (darker/flatter).
+    let cancelled = develop(
+        &base,
+        &PipelineParams {
+            invert: true,
+            wb_temperature: -80.0,
+            exposure: -1.4,
+            contrast: -82.0,
+            saturation: -20.0,
+            ..PipelineParams::default()
+        },
+    );
+    let mean = |img: &RgbaImage| {
+        let sum: u64 = img
+            .data
+            .par_iter()
+            .map(|b| *b as u64)
+            .reduce(|| 0, |a, b| a + b);
+        sum / (img.data.len() / 4) as u64
+    };
+    assert!(mean(&out) > mean(&cancelled));
 }
 
 #[test]

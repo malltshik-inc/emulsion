@@ -90,21 +90,24 @@ Supporting structure:
 
 Exactly these controls. No curve editor, no HSL, no channels panel, no LUT import in v1.
 
-Color sliders (five visible in the v1 UI):
+Color sliders (eight visible in the v1 UI):
 
 1. **White balance — temperature** (range −100..+100; 0 = neutral, + = warmer)
 2. **White balance — tint** (range −100..+100; 0 = neutral, + = magenta)
 3. **Exposure** (range −3..+3 EV)
 4. **Contrast** (range −100..+100; 0 = neutral, + = punchier, − = flatter)
 5. **Saturation** (range −100..+100; 0 = neutral, − = greyscale, + = more colour)
-6. **Black point R** (0..1) — param only; slider hidden in the v1 UI
-7. **Black point G** (0..1) — param only; slider hidden in the v1 UI
-8. **Black point B** (0..1) — param only; slider hidden in the v1 UI
+6. **Shadows** (range -100..+100; 0 = neutral, + = lift the dark tones, - = deepen)
+7. **Highlights** (range -100..+100; 0 = neutral, + = raise the bright tones, - = recover)
+8. **Vignette** (range -100..+100; 0 = none, + = darken corners, - = brighten corners)
+9. **Black point R** (0..1) — param only; slider hidden in the v1 UI
+10. **Black point G** (0..1) — param only; slider hidden in the v1 UI
+11. **Black point B** (0..1) — param only; slider hidden in the v1 UI
 
 Film:
 
-9. **Develop** (toggle) — the negative→positive base conversion
-10. **Simulations** — a bundled Hald CLUT chosen from a horizontal strip.
+12. **Develop** (toggle) — the negative→positive base conversion
+13. **Simulations** — a bundled Hald CLUT chosen from a horizontal strip.
     The strip contains every black-and-white and colour simulation from the
     RawTherapee Film Simulation collection (bundle licence in
     `emulsion-core/assets/film/ATTRIBUTION.md`). A search box in the header
@@ -113,18 +116,26 @@ Film:
 
 Rotate:
 
-11. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
-12. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
+14. **Rotate 90°** (two buttons: counter-clockwise, clockwise)
+15. **Fine angle** (slider, −5°..+5°, as fine as 0.1°)
+16. **Flip horizontal** (button) — mirrors the image left-to-right
 
 Defaults (MUST be identical on every fresh open): temperature 0, tint 0, exposure 0,
-contrast 0, saturation 0, no film simulation, all black points 0, Develop **off**,
-rotation 0, angle 0, no crop.
+contrast 0, saturation 0, shadows 0, highlights 0, vignette 0, no film simulation, all black points 0, Develop **off**,
+rotation 0, angle 0, flip off, no crop.
+
+Conversion baseline (MUST): the negative→positive conversion adds a fixed baseline
+on top of the sliders — exposure **+1.4 EV**, white-balance temperature **+80**,
+contrast **+82**, saturation **+20** — so a neutral scan converts to a usable
+positive on the first Develop click instead of a dark, pale one. A slider at 0
+therefore means "the baseline", not "no adjustment", while Develop is on; the
+baseline never applies to positive (non-inverted) images.
 
 Behavior requirements (MUST):
 
 - Every control change re-renders the preview **immediately** (no apply button).
 - Double-clicking a slider track resets that control to its default (0).
-- 90° rotation and fine angle combine — the result is the sum of the two.
+- 90° rotation, fine angle and flip combine — the result is the sum of the two rotations plus the mirror.
 - The visible sliders (plus the hidden black-point params) and the invert switch
   work on the *same* image and combine.
 - The preview reflects the final result that export will produce, at the resolution
@@ -144,19 +155,27 @@ image into a dark sliver, and a fresh open must be close without a large exposur
 bump. The manual R/G/B sliders are currently hidden in the v1 UI (see §7); the
 automatic baseline is still computed and applied.
 
-## 9. Crop (MUST, v1 mechanism; UI in §13)
+## 9. Crop (MUST, v1)
 
 - MUST allow cropping the image to a rectangular region.
-- MUST support free-form crop and at least one aspect-ratio lock (e.g. 3:2, 1:1, 4:5)
-  with a selectable aspect ratio and an "free" option.
-- The crop preview MUST show the remaining region.
+- Selecting the Crop tool shows the full frame; the user drags on the image to draw
+  a region (when none exists), drags inside it to move it, and drags its handles/edges
+  to resize. Dragging **outside** the region pans the image. There
+  are no Apply/Cancel buttons: leaving Crop (clicking another tool, or Crop again)
+  applies the region, and the preview then shows **only the cropped result**.
+- A region that is tiny (a stray click) or covers the whole frame means "no crop".
+- The aspect selector defaults to **Free** (the region is drawn unconstrained).
+  Choosing a locked ratio (Original, 1:1, 4:3, 3:2, 16:9, 2:1) reshapes the region
+  proportionally around its center to that ratio, oriented by the orientation selector,
+  and then **keeps it locked while drawing, moving and resizing**. Returning to Free
+  stops constraining it.
 - The crop is part of the settings (see §10) and MUST survive as a patch/undo unit.
 - Crop is applied as part of the final render/export.
 
 ## 10. Settings as data (MUST)
 
 The user's entire edit is a single value: the visible sliders (plus the hidden
-black-point params), invert, the selected film simulation, rotate, angle, crop.
+black-point params), invert, the selected film simulation, rotate, angle, flip, crop.
 This value MUST:
 
 - be loadable/savable as a small text file (the **patch**), which is only the settings
@@ -175,18 +194,19 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 ## 11. Export (MUST)
 
 - The **only** file-writing operation.
+- Clicking **Export** opens a small dialog with two choices: **This photo**
+  (single export via the save dialog) and **All edited photos** (pick an output
+  folder; every file whose settings differ from the defaults is exported there as
+  `<stem>.png`). A **Cancel** button dismisses it.
 - Supported destinations: **JPEG** (with a quality control, 1–100, default high)
-  and **PNG** (lossless, no quality control).
+  and **PNG** (lossless, no quality control). Batch export always writes PNG.
 - MUST export at the source resolution (real pixels, not the preview scale).
 - Uses the native save dialog; the chosen folder/file name is user's. The dialog
   pre-fills the **source file stem** (e.g. `P6030011.png` for `P6030011.ORF`).
 - MUST never touch the original file.
-- After a successful save, writes a sidecar next to the export
-  (`<name>.emulsion.json`) containing the source path, the exact `PipelineParams`
-  used and, when a film simulation was selected, its name. Format
-  `emulsion-params-v1`. This is for reproduction and taste analysis; it is not
-  the patch autosave.
-- After export, the status line states the result (success and path, or error).
+- After a successful save, the status line states the result (success and path,
+  or error). The `<name>.emulsion.json` sidecar is **currently disabled** (the
+  code is kept, commented out, for a future re-enable).
 
 ## 12. Performance (MUST)
 
@@ -202,8 +222,6 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 
 ## 13. Out of scope / deferred (MAY, not v1 gates)
 
-- Crop **tool** in the UI (marquee + handles + aspect lock) — mechanism exists, tool
-  is next.
 - Patch-file autosave/restore and preset management in the UI.
 - Importing user-supplied `.cube`/Hald LUTs (the bundled film strip is v1).
 - Undo UI beyond in-memory history.
@@ -233,7 +251,7 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
       64 MP opens and remains usable.
 - [ ] Film strip lists every bundled simulation, search narrows it by name, and
       picking one updates the preview, thumbnails and export.
-- [ ] 90° + fine angle + crop combine correctly and match the export.
+- [ ] 90° + fine angle + flip + crop combine correctly and match the export.
 - [ ] Export JPEG (with quality) and PNG at full resolution; original byte-for-byte
       untouched (verified by file hash before/after).
 - [ ] Undo reverts each committed setting change.

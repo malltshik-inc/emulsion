@@ -35,25 +35,19 @@ off shows a readable negative (pavement and people visible, no white clipping)
 and toggling back reproduces the exact same positive; an ordinary positive scan
 (e.g. JPEG) is unchanged; unit tests cover the round trip.
 
-## 2. Calibrate the "Develop film" starting look (preset vs auto)
+## 2. DONE: Develop baseline
 
-**Observed:** on both owner scans, reaching a satisfying positive took about
-EV +0.75..+2.0, contrast +30..+60, saturation +30..+60 (the ARW screenshot
-actually sits at EV +2.25 / 35 / 35, WB 80). A neutral encoded inversion is
-readable but flat; `EV +1.25 / contrast +40 / saturation +40` on P6030011.ORF
-looked punchier but slightly bright.
+The negative→positive conversion now adds a fixed baseline on top of the sliders
+(exposure +1.4 EV, WB temperature +80, contrast +82, saturation +20) so a neutral
+scan converts to a usable positive on the first Develop click instead of a dark,
+pale one. Chosen over a visible preset (which would set the slider values when
+Develop is enabled) because the sliders then stay at 0 = baseline and the
+positive (non-inverted) path is untouched. Covered by
+`develop_defaults_apply_conversion_baseline`; see PRODUCT §7 and ARCH §3.
 
-**Open question:** when Develop is enabled, should the app set suggested slider
-values (visible and editable), or keep everything at 0 and rely on the user? A
-preset is transparent and preserves slider semantics; hidden auto-tone is not.
-Do not silently bake a look into the neutral path.
-
-**Also consider:** auto exposure from the inverted luma distribution for very
-thin/under-exposed negatives, and whether WB needs a suggested value (the ARW
-shot used +80).
-
-**Where:** `emulsion-app/src/main.rs` (Develop checkbox), `tonemap.rs`
-(`apply_look`), `params.rs`.
+**Still open:** auto exposure from the inverted luma distribution for very
+thin/under-exposed negatives (the baseline is fixed, not adaptive), and a
+suggested WB beyond the fixed +80.
 
 **Reference:** a Gemini post-mortem the owner supplied emphasises film-base /
 percentile normalization (we already do this in `robust_bounds`), logarithmic

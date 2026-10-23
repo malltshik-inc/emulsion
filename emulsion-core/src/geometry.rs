@@ -121,6 +121,25 @@ pub fn rotate_fine(img: &LinearImage, angle_deg: f32) -> LinearImage {
     out
 }
 
+/// Mirror horizontally: the left column becomes the right column (and vice versa).
+pub fn flip_horizontal(img: &LinearImage) -> LinearImage {
+    let w = img.width;
+    let mut out = LinearImage::new(w, img.height);
+    out.data
+        .par_chunks_exact_mut(w * 3)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let src_row = &img.data[y * w * 3..(y + 1) * w * 3];
+            for x in 0..w {
+                let src = (w - 1 - x) * 3;
+                row[x * 3] = src_row[src];
+                row[x * 3 + 1] = src_row[src + 1];
+                row[x * 3 + 2] = src_row[src + 2];
+            }
+        });
+    out
+}
+
 fn sample_bilinear(img: &LinearImage, x: f32, y: f32) -> (f32, f32, f32) {
     if x < 0.0 || y < 0.0 || x >= (img.width - 1) as f32 || y >= (img.height - 1) as f32 {
         return (1.0, 1.0, 1.0);

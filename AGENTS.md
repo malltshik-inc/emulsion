@@ -29,7 +29,7 @@ Rules from CODEX/METHODS are the floor; this file only adds what is Emulsion-spe
 ## Main rules
 
 - Follow `docs/CODEX.md` first. It wins on conflict.
-- 32 core tests give the baseline; keep every op unit-tested (`cargo test`).
+- 37 core tests give the baseline; keep every op unit-tested (`cargo test`).
 - `cargo fmt` and `cargo clippy` must stay clean.
 - `emulsion-core` stays pure Rust, no GUI/IO-glue deps, no C deps, fully testable.
 - The app is one pure call: `process(source, params) -> image`. Edits are params only.

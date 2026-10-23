@@ -23,6 +23,15 @@ pub struct PipelineParams {
     pub contrast: f32,
     /// Saturation, -100..100 (0 = neutral, - = greyscale, + = more saturated)
     pub saturation: f32,
+    /// Shadows, -100..100 (0 = neutral, + = lift/lower the dark tones)
+    #[serde(default)]
+    pub shadows: f32,
+    /// Highlights, -100..100 (0 = neutral, + = raise/lower the bright tones)
+    #[serde(default)]
+    pub highlights: f32,
+    /// Vignette, -100..100 (0 = none, + = darken edges, - = brighten edges)
+    #[serde(default)]
+    pub vignette: f32,
     /// Index into [`crate::film::films`], `None` = no film simulation.
     #[serde(default)]
     pub film: Option<u16>,
@@ -34,6 +43,9 @@ pub struct PipelineParams {
     pub rotate_90: u8,
     /// Fine angle in degrees, -5.0..+5.0
     pub fine_angle: f32,
+    /// Mirror horizontally (left <-> right)
+    #[serde(default)]
+    pub flip_horizontal: bool,
     pub crop: Option<CropRect>,
 }
 
@@ -45,11 +57,15 @@ impl Default for PipelineParams {
             exposure: 0.0,
             contrast: 0.0,
             saturation: 0.0,
+            shadows: 0.0,
+            highlights: 0.0,
+            vignette: 0.0,
             film: None,
             black_point: [0.0, 0.0, 0.0],
             invert: false,
             rotate_90: 0,
             fine_angle: 0.0,
+            flip_horizontal: false,
             crop: None,
         }
     }

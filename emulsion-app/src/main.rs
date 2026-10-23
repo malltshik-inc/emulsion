@@ -2,7 +2,8 @@
 
 use eframe::egui;
 use egui::{
-    Align, Align2, Color32, FontFamily, FontId, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextStyle, Vec2, pos2, scroll_area::ScrollBarVisibility, vec2,
+    Align, Align2, Color32, FontFamily, FontId, Layout, Margin, Pos2, Rect, RichText, Sense,
+    Stroke, StrokeKind, TextStyle, Vec2, pos2, scroll_area::ScrollBarVisibility, vec2,
 };
 
 use emulsion_core::{
@@ -74,6 +75,9 @@ enum Tool {
     Ev,
     Contrast,
     Saturation,
+    Shadows,
+    Highlights,
+    Vignette,
     Rotate,
     Crop,
 }
@@ -88,6 +92,9 @@ impl Tool {
             Self::Ev => "Exposure",
             Self::Contrast => "Contrast",
             Self::Saturation => "Saturation",
+            Self::Shadows => "Shadows",
+            Self::Highlights => "Highlights",
+            Self::Vignette => "Vignette",
             Self::Rotate => "Rotate",
             Self::Crop => "Crop",
         }
@@ -102,6 +109,9 @@ impl Tool {
             Self::Ev => "EV",
             Self::Contrast => "CONTRAST",
             Self::Saturation => "SATURATION",
+            Self::Shadows => "SHADOWS",
+            Self::Highlights => "HIGHLIGHTS",
+            Self::Vignette => "VIGNETTE",
             Self::Rotate => "ROTATE",
             Self::Crop => "CROP",
         }
@@ -116,6 +126,9 @@ impl Tool {
             Self::Ev => "EV",
             Self::Contrast => "CONTRAST",
             Self::Saturation => "SATURATION",
+            Self::Shadows => "SHADOWS",
+            Self::Highlights => "HIGHLIGHTS",
+            Self::Vignette => "EDGE",
             Self::Rotate => "ANGLE",
             Self::Crop => "ASPECT",
         }
@@ -130,6 +143,9 @@ impl Tool {
             Self::Ev => "exposure brightness",
             Self::Contrast => "contrast",
             Self::Saturation => "saturation vibrance color",
+            Self::Shadows => "shadows dark lift",
+            Self::Highlights => "highlights bright recovery",
+            Self::Vignette => "vignette edges darken",
             Self::Rotate => "rotate angle straighten",
             Self::Crop => "crop aspect ratio",
         }
@@ -165,6 +181,9 @@ impl Tool {
             Self::Ev => &mut params.exposure,
             Self::Contrast => &mut params.contrast,
             Self::Saturation => &mut params.saturation,
+            Self::Shadows => &mut params.shadows,
+            Self::Highlights => &mut params.highlights,
+            Self::Vignette => &mut params.vignette,
             Self::Rotate => &mut params.fine_angle,
             Self::Crop | Self::Develop | Self::Simulations => {
                 // Crop, Develop and Simulations have no single f32 value; not called for them.
@@ -182,7 +201,9 @@ impl Tool {
         match self {
             Self::Develop => params.invert,
             Self::Simulations => params.film.is_some(),
-            Self::Rotate => params.fine_angle != 0.0 || params.rotate_90 != 0,
+            Self::Rotate => {
+                params.fine_angle != 0.0 || params.rotate_90 != 0 || params.flip_horizontal
+            }
             Self::Crop => params.crop.is_some(),
             _ => {
                 let mut copy = *params;
@@ -194,6 +215,7 @@ impl Tool {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CropAspect {
+    Free,
     Original,
     Square,
     FourThree,
@@ -203,7 +225,8 @@ enum CropAspect {
 }
 
 impl CropAspect {
-    const ALL: [CropAspect; 6] = [
+    const ALL: [CropAspect; 7] = [
+        Self::Free,
         Self::Original,
         Self::Square,
         Self::FourThree,
@@ -214,6 +237,7 @@ impl CropAspect {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Free => "Free",
             Self::Original => "Original",
             Self::Square => "1:1",
             Self::FourThree => "4:3",
@@ -223,10 +247,14 @@ impl CropAspect {
         }
     }
 
-    /// Base width / height, or `None` for a free (unconstrained) crop.
+    fn is_free(self) -> bool {
+        matches!(self, Self::Free)
+    }
+
+    /// Base width / height, or `None` for an unconstrained crop.
     fn ratio(self) -> Option<f32> {
         match self {
-            Self::Original => None,
+            Self::Free | Self::Original => None,
             Self::Square => Some(1.0),
             Self::FourThree => Some(4.0 / 3.0),
             Self::ThreeTwo => Some(3.0 / 2.0),
@@ -245,6 +273,7 @@ enum Orientation {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CropDrag {
     None,
+    Draw, // drawing a fresh rect
     Rect, // dragging whole rect
     TL,
     TR,
@@ -299,6 +328,8 @@ struct EmulsionApp {
     status: String,
     toast: Option<(String, Instant)>,
     dirty: bool,
+    clipboard: Option<PipelineParams>,
+    export_dialog: bool,
 
     // Crop state
     crop_rect: Option<CropRect>,      // live crop (mirrors params.crop)
@@ -307,7 +338,7 @@ struct EmulsionApp {
     crop_drag_rect: Option<CropRect>, // rect at drag start
     crop_aspect: CropAspect,          // aspect-ratio constraint
     crop_orientation: Orientation,    // portrait / landscape
-    crop_backup: Option<CropRect>,    // crop to restore on Cancel
+    crop_pan: bool,                   // current drag started outside the crop (pan)
 }
 
 impl EmulsionApp {
@@ -353,13 +384,15 @@ impl EmulsionApp {
             status: String::from("Open a folder to start"),
             toast: None,
             dirty: true,
+            clipboard: None,
+            export_dialog: false,
             crop_rect: None,
             crop_drag: CropDrag::None,
             crop_drag_start: None,
             crop_drag_rect: None,
-            crop_aspect: CropAspect::Original,
+            crop_aspect: CropAspect::Free,
             crop_orientation: Orientation::Landscape,
-            crop_backup: None,
+            crop_pan: false,
         }
     }
 
@@ -437,7 +470,6 @@ impl EmulsionApp {
             .copied()
             .unwrap_or_default();
         self.crop_rect = self.params.crop;
-        self.crop_backup = self.params.crop;
         self.crop_drag = CropDrag::None;
         self.crop_drag_start = None;
         self.crop_drag_rect = None;
@@ -636,9 +668,12 @@ impl EmulsionApp {
         if !self.dirty {
             return;
         }
-        // Preview always shows the full frame; crop is an overlay applied on export.
+        // While cropping, show the full frame so a region can be drawn; once the
+        // crop is applied (leaving Crop), the preview shows only the cropped result.
         let mut preview_params = self.params;
-        preview_params.crop = None;
+        if self.open_tool == Some(Tool::Crop) {
+            preview_params.crop = None;
+        }
         let out = develop(&loaded.base_small, &preview_params);
         let w = out.width as u32;
         let h = out.height as u32;
@@ -711,6 +746,71 @@ impl EmulsionApp {
         self.show_toast("Edits reset");
     }
 
+    fn copy_settings(&mut self) {
+        self.clipboard = Some(self.params);
+        self.show_toast("Settings copied");
+    }
+
+    fn paste_settings(&mut self) {
+        if let Some(p) = self.clipboard {
+            self.params = p;
+            self.crop_rect = p.crop;
+            self.crop_drag = CropDrag::None;
+            self.crop_drag_start = None;
+            self.crop_drag_rect = None;
+            self.dirty = true;
+            self.thumbs_dirty = true;
+            self.show_toast("Settings pasted");
+        }
+    }
+
+    fn export_modal(&mut self, ui: &mut egui::Ui) {
+        if !self.export_dialog {
+            return;
+        }
+        egui::Window::new("Export")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .show(ui.ctx(), |ui| {
+                // ui.label(RichText::new("What should be exported?").color(TEXT));
+                // ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("This photo").size(13.0))
+                                .min_size(vec2(110.0, 30.0)),
+                        )
+                        .clicked()
+                    {
+                        self.export_dialog = false;
+                        self.export();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("All edited photos").size(13.0))
+                                .min_size(vec2(150.0, 30.0)),
+                        )
+                        .clicked()
+                    {
+                        self.export_dialog = false;
+                        self.export_all_edited();
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("Cancel").size(13.0).color(MUTED))
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(1.0, LINE))
+                                .min_size(vec2(80.0, 30.0)),
+                        )
+                        .clicked()
+                    {
+                        self.export_dialog = false;
+                    }
+                });
+            });
+    }
+
     fn show_toast(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), Instant::now() + Duration::from_secs(2)));
     }
@@ -755,17 +855,17 @@ impl EmulsionApp {
         };
         match result {
             Ok(()) => {
-                let sidecar = std::path::Path::new(&s)
-                    .with_extension("emulsion.json")
-                    .to_string_lossy()
-                    .into_owned();
-                self.status =
-                    match emulsion_core::export::save_sidecar(&sidecar, &source, &self.params) {
-                        Ok(()) => format!("exported {} + settings", s),
-                        Err(e) => {
-                            format!("exported {} (settings sidecar failed: {})", s, e.message())
-                        }
-                    };
+                // Sidecar (.emulsion.json) writing is disabled for now.
+                // let sidecar = std::path::Path::new(&s)
+                //     .with_extension("emulsion.json")
+                //     .to_string_lossy()
+                //     .into_owned();
+                // self.status =
+                //     match emulsion_core::export::save_sidecar(&sidecar, &source, &self.params) {
+                //         Ok(()) => format!("exported {} + settings", s),
+                //         Err(e) => format!("exported {} (settings sidecar failed: {})", s, e.message()),
+                //     };
+                self.status = format!("exported {}", s);
                 self.show_toast(self.status.clone());
             }
             Err(e) => {
@@ -773,6 +873,47 @@ impl EmulsionApp {
                 self.show_toast(self.status.clone());
             }
         }
+    }
+
+    fn export_all_edited(&mut self) {
+        let targets: Vec<(usize, PipelineParams)> = (0..self.files.len())
+            .map(|i| (i, self.params_for_index(i)))
+            .filter(|(_, p)| *p != PipelineParams::default())
+            .collect();
+        if targets.is_empty() {
+            self.status = String::from("no edited photos to export");
+            self.show_toast(self.status.clone());
+            return;
+        }
+        let Some(dir) = rfd::FileDialog::new().pick_folder() else {
+            self.status = String::from("export cancelled");
+            return;
+        };
+        let dir = dir.to_string_lossy().into_owned();
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for (i, params) in targets {
+            let source = self.files[i].clone();
+            let Ok(full) = emulsion_core::decode::decode(source.as_str()) else {
+                failed += 1;
+                continue;
+            };
+            let out = develop(&full, &params);
+            let stem = std::path::Path::new(&source)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("emulsion"));
+            let dest = std::path::Path::new(&dir)
+                .join(format!("{}.png", stem))
+                .to_string_lossy()
+                .into_owned();
+            match emulsion_core::export::save_png(dest.as_str(), &out) {
+                Ok(()) => done += 1,
+                Err(_) => failed += 1,
+            }
+        }
+        self.status = format!("exported {} photo(s), {} failed to {}", done, failed, dir);
+        self.show_toast(self.status.clone());
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
@@ -854,7 +995,7 @@ impl EmulsionApp {
             painter.galley(
                 pos2(
                     meta_rect.left() + meta_pad / 2.0,
-                    meta_rect.center().y - meta_galley.size().y / 2.0 + 1.0,
+                    meta_rect.center().y - meta_galley.size().y / 2.0 + 3.0,
                 ),
                 meta_galley,
                 DIM,
@@ -864,8 +1005,16 @@ impl EmulsionApp {
                 pos2(rect.right() - 16.0 - 98.0, center_y - 16.0),
                 vec2(98.0, 32.0),
             );
-            let reset_rect = Rect::from_min_size(
+            let paste_rect = Rect::from_min_size(
                 pos2(export_rect.left() - 8.0 - 66.0, center_y - 16.0),
+                vec2(66.0, 32.0),
+            );
+            let copy_rect = Rect::from_min_size(
+                pos2(paste_rect.left() - 8.0 - 66.0, center_y - 16.0),
+                vec2(66.0, 32.0),
+            );
+            let reset_rect = Rect::from_min_size(
+                pos2(copy_rect.left() - 8.0 - 66.0, center_y - 16.0),
                 vec2(66.0, 32.0),
             );
 
@@ -879,6 +1028,34 @@ impl EmulsionApp {
             );
             if reset.clicked() {
                 self.reset_all();
+            }
+
+            let small_button = |label: &str, size: Vec2| {
+                egui::Button::new(RichText::new(label).size(13.0).color(MUTED))
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::new(1.0, LINE))
+                    .corner_radius(8.0)
+                    .min_size(size)
+            };
+            let copy_enabled = self.is_current_edited();
+            if ui
+                .add_enabled_ui(copy_enabled, |ui| {
+                    ui.put(copy_rect, small_button("Copy", copy_rect.size()))
+                })
+                .inner
+                .clicked()
+            {
+                self.copy_settings();
+            }
+            let paste_enabled = self.clipboard.is_some();
+            if ui
+                .add_enabled_ui(paste_enabled, |ui| {
+                    ui.put(paste_rect, small_button("Paste", paste_rect.size()))
+                })
+                .inner
+                .clicked()
+            {
+                self.paste_settings();
             }
 
             painter.rect_filled(
@@ -903,7 +1080,7 @@ impl EmulsionApp {
                 .min_size(export_rect.size()),
             );
             if export.clicked() {
-                self.export();
+                self.export_dialog = true;
             }
         }
     }
@@ -1143,7 +1320,7 @@ impl EmulsionApp {
                     self.tool_search.clear();
                     response.surrender_focus();
                 }
-                
+
                 let (rect, _) = ui.allocate_exact_size(vec2(1.0, 18.0), Sense::hover());
                 ui.painter().rect_filled(rect, 0.0, LINE);
 
@@ -1162,9 +1339,12 @@ impl EmulsionApp {
                                 Tool::Rotate,
                                 Tool::Ev,
                                 Tool::Contrast,
+                                Tool::Shadows,
+                                Tool::Highlights,
                                 Tool::Wb,
                                 Tool::Tint,
                                 Tool::Saturation,
+                                Tool::Vignette,
                             ];
                             for &tool in TOOLS {
                                 if tool_visible(&query, tool) {
@@ -1203,54 +1383,38 @@ impl EmulsionApp {
                     params.invert = !params.invert;
                 } else if tool == Tool::Simulations {
                     self.film_controls(ui, &mut params);
+                } else if tool == Tool::Crop {
+                    crop_controls(self, ui, &mut params);
                 } else {
                     ui.allocate_ui_with_layout(
                         vec2(ui.available_width(), 50.0),
                         Layout::left_to_right(Align::Center),
                         |ui| {
-                            if tool == Tool::Crop {
-                                ui.allocate_ui_with_layout(
-                                    vec2(140.0, 50.0),
-                                    Layout::left_to_right(Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            RichText::new("Crop").size(14.0).strong().color(TEXT),
-                                        );
-                                    },
-                                );
-                            } else {
-                                ui.allocate_ui_with_layout(
-                                    vec2(140.0, 50.0),
-                                    Layout::left_to_right(Align::Center),
-                                    |ui| {
-                                        ui.spacing_mut().item_spacing.y = 1.0;
-                                        ui.label(
-                                            RichText::new(tool.name())
-                                                .size(14.0)
-                                                .strong()
-                                                .color(TEXT),
-                                        );
+                            ui.allocate_ui_with_layout(
+                                vec2(140.0, 50.0),
+                                Layout::left_to_right(Align::Center),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.y = 1.0;
+                                    ui.label(
+                                        RichText::new(tool.name()).size(14.0).strong().color(TEXT),
+                                    );
+                                    if tool != Tool::Rotate {
                                         ui.label(
                                             RichText::new(tool.code())
                                                 .size(10.5)
                                                 .strong()
                                                 .color(DIM),
                                         );
-                                    },
-                                );
-                            }
+                                    }
+                                },
+                            );
 
                             if tool == Tool::Rotate {
                                 rotate_buttons(ui, &mut params);
                             }
 
                             match tool {
-                                Tool::Crop => {
-                                    ui.add_space(4.0);
-                                    if crop_controls(self, ui, &mut params) {
-                                        open_tool = None;
-                                    }
-                                }
+                                Tool::Crop => {}
                                 _ => {
                                     // Standard slider + dragvalue + reset for other tools
                                     let value = tool.value_mut(&mut params);
@@ -1311,6 +1475,7 @@ impl EmulsionApp {
                                         *value = 0.0;
                                         if tool == Tool::Rotate {
                                             params.rotate_90 = 0;
+                                            params.flip_horizontal = false;
                                         }
                                     }
                                 }
@@ -1339,7 +1504,12 @@ impl EmulsionApp {
         }
         if open_tool != self.open_tool {
             if open_tool == Some(Tool::Crop) {
-                self.crop_backup = self.params.crop;
+                // Enter crop: draft starts from the applied crop (may be none).
+                self.crop_rect = self.params.crop;
+                self.crop_drag = CropDrag::None;
+                self.crop_drag_start = None;
+                self.crop_drag_rect = None;
+                self.crop_pan = false;
                 if let Some((w, h)) = self.current_size() {
                     self.crop_orientation = if w >= h {
                         Orientation::Landscape
@@ -1347,17 +1517,25 @@ impl EmulsionApp {
                         Orientation::Portrait
                     };
                 }
-                if self.crop_rect.is_none() {
-                    self.crop_rect = Some(CropRect {
-                        x: 0.1,
-                        y: 0.1,
-                        width: 0.8,
-                        height: 0.8,
+                self.dirty = true;
+            } else if self.open_tool == Some(Tool::Crop) {
+                // Leave crop: apply the draft. A tiny or full-frame rect is "no crop".
+                let previous = self.params.crop;
+                let applied = self.crop_rect.and_then(normalize_crop);
+                self.params.crop = applied;
+                self.crop_rect = applied;
+                self.crop_drag = CropDrag::None;
+                self.crop_drag_start = None;
+                self.crop_drag_rect = None;
+                self.crop_pan = false;
+                self.dirty = true;
+                if applied != previous {
+                    self.show_toast(if applied.is_some() {
+                        "Crop applied"
+                    } else {
+                        "Crop removed"
                     });
                 }
-            } else if self.open_tool == Some(Tool::Crop) {
-                // Leaving Crop without Apply: discard an uncommitted draft.
-                self.crop_rect = self.params.crop;
             }
             self.open_tool = open_tool;
         }
@@ -1600,10 +1778,13 @@ impl EmulsionApp {
             Rect::from_center_size(rect.center() + self.pan + vec2(0.0, -8.0), vec2(w, h));
 
         // Crop rect in screen coordinates
+        let cropping = self.open_tool == Some(Tool::Crop);
         let crop_screen = self.crop_rect.map(|cr| self.crop_to_screen(cr, frame_rect));
 
         // Handle crop interaction (needs mutable self)
-        self.handle_crop_interaction(ui, &response, frame_rect, crop_screen);
+        if cropping {
+            self.handle_crop_interaction(ui, &response, frame_rect);
+        }
 
         // Space recenter on crop center if crop exists
         if ui.input(|i| i.key_pressed(egui::Key::Space)) && !ui.ctx().egui_wants_keyboard_input() {
@@ -1636,8 +1817,8 @@ impl EmulsionApp {
             .fit_to_exact_size(frame_rect.size())
             .paint_at(ui, frame_rect);
 
-        // Draw crop overlay (darken outside) and crop frame
-        if let Some(cr) = crop_screen {
+        // Draw crop overlay (darken outside) and crop frame while cropping
+        if cropping && let Some(cr) = crop_screen {
             self.draw_crop_overlay(&painter, frame_rect, cr);
             self.draw_crop_frame(&painter, cr);
         }
@@ -1678,9 +1859,28 @@ impl EmulsionApp {
             self.zoom = (self.zoom * (1.0 + scroll * 0.005)).clamp(0.01, 40.0);
             ui.ctx().request_repaint();
         }
-        if response.is_pointer_button_down_on() {
+        // Dragging inside the crop edits it; a drag anywhere else pans the image.
+        let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        if !primary_down {
+            self.crop_pan = false;
+        }
+        if self.crop_drag == CropDrag::None && response.is_pointer_button_down_on() {
             let delta = ui.input(|i| i.pointer.delta());
             self.pan += delta;
+            // While cropping, keep the crop rect fixed on screen: panning the
+            // image slides it underneath, so the crop's image coords shift back.
+            if cropping && let Some(cr) = self.crop_rect {
+                self.crop_pan = true;
+                if delta != Vec2::ZERO {
+                    let next = CropRect {
+                        x: (cr.x - delta.x / frame_rect.width()).clamp(0.0, 1.0 - cr.width),
+                        y: (cr.y - delta.y / frame_rect.height()).clamp(0.0, 1.0 - cr.height),
+                        ..cr
+                    };
+                    self.crop_rect = Some(next);
+                    self.params.crop = Some(next);
+                }
+            }
         }
     }
 
@@ -1709,128 +1909,128 @@ impl EmulsionApp {
         ui: &mut egui::Ui,
         response: &egui::Response,
         frame: Rect,
-        crop_screen: Option<Rect>,
     ) {
-        let mut crop = match self.crop_rect {
-            Some(cr) => cr,
-            None => return,
-        };
-
-        let Some(_crop_rect) = crop_screen else {
+        let Some(pos) = ui.input(|i| i.pointer.interact_pos()) else {
             return;
         };
-        let pointer = ui.input(|i| i.pointer.interact_pos());
+        let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        let ratio = self.constrained_frac_ratio();
+        let norm = |p: Pos2| {
+            (
+                (p.x - frame.left()) / frame.width(),
+                (p.y - frame.top()) / frame.height(),
+            )
+        };
 
-        // Handle drag
+        // An in-progress drag or draw.
         if self.crop_drag != CropDrag::None {
-            if let Some(pos) = pointer {
-                if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
-                    let drag_start = self.crop_drag_start.unwrap_or(pos);
-                    let start_rect = self.crop_drag_rect.unwrap_or(crop);
-                    let delta = pos - drag_start;
-
-                    // Convert screen delta to normalized crop delta
-                    let norm_delta = vec2(delta.x / frame.width(), delta.y / frame.height());
-
-                    match self.crop_drag {
-                        CropDrag::Rect => {
-                            crop.x =
-                                (start_rect.x + norm_delta.x).clamp(0.0, 1.0 - start_rect.width);
-                            crop.y =
-                                (start_rect.y + norm_delta.y).clamp(0.0, 1.0 - start_rect.height);
-                        }
-                        CropDrag::TL => {
-                            crop.x = (start_rect.x + norm_delta.x)
-                                .clamp(0.0, start_rect.x + start_rect.width - 0.01);
-                            crop.y = (start_rect.y + norm_delta.y)
-                                .clamp(0.0, start_rect.y + start_rect.height - 0.01);
-                            crop.width = (start_rect.width - norm_delta.x).max(0.01);
-                            crop.height = (start_rect.height - norm_delta.y).max(0.01);
-                        }
-                        CropDrag::TR => {
-                            crop.y = (start_rect.y + norm_delta.y)
-                                .clamp(0.0, start_rect.y + start_rect.height - 0.01);
-                            crop.width = (start_rect.width + norm_delta.x)
-                                .max(0.01)
-                                .min(1.0 - start_rect.x);
-                            crop.height = (start_rect.height - norm_delta.y).max(0.01);
-                        }
-                        CropDrag::BL => {
-                            crop.x = (start_rect.x + norm_delta.x)
-                                .clamp(0.0, start_rect.x + start_rect.width - 0.01);
-                            crop.width = (start_rect.width - norm_delta.x).max(0.01);
-                            crop.height = (start_rect.height + norm_delta.y)
-                                .max(0.01)
-                                .min(1.0 - start_rect.y);
-                        }
-                        CropDrag::BR => {
-                            crop.width = (start_rect.width + norm_delta.x)
-                                .max(0.01)
-                                .min(1.0 - start_rect.x);
-                            crop.height = (start_rect.height + norm_delta.y)
-                                .max(0.01)
-                                .min(1.0 - start_rect.y);
-                        }
-                        CropDrag::T => {
-                            crop.y = (start_rect.y + norm_delta.y)
-                                .clamp(0.0, start_rect.y + start_rect.height - 0.01);
-                            crop.height = (start_rect.height - norm_delta.y).max(0.01);
-                        }
-                        CropDrag::B => {
-                            crop.height = (start_rect.height + norm_delta.y)
-                                .max(0.01)
-                                .min(1.0 - start_rect.y);
-                        }
-                        CropDrag::L => {
-                            crop.x = (start_rect.x + norm_delta.x)
-                                .clamp(0.0, start_rect.x + start_rect.width - 0.01);
-                            crop.width = (start_rect.width - norm_delta.x).max(0.01);
-                        }
-                        CropDrag::R => {
-                            crop.width = (start_rect.width + norm_delta.x)
-                                .max(0.01)
-                                .min(1.0 - start_rect.x);
-                        }
-                        CropDrag::None => {}
+            if primary_down {
+                let drag_start = self.crop_drag_start.unwrap_or(pos);
+                if self.crop_drag == CropDrag::Draw {
+                    if (pos - drag_start).length() > 4.0 {
+                        let (ax, ay) = norm(drag_start);
+                        let (mx, my) = norm(pos);
+                        let crop = match ratio {
+                            Some(r) => ratio_draw((ax, ay), (mx, my), r),
+                            None => self.crop_from_drag(drag_start, pos, frame),
+                        };
+                        self.crop_rect = Some(crop);
+                        self.crop_drag_rect = Some(crop);
+                        self.params.crop = Some(crop);
+                        self.dirty = true;
                     }
-
-                    // Dragging is free-form; aspect presets reshape on selection.
+                } else {
+                    let start_rect = self.crop_drag_rect.unwrap_or(CropRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                    });
+                    let delta = pos - drag_start;
+                    let nd = vec2(delta.x / frame.width(), delta.y / frame.height());
+                    let crop = if self.crop_drag == CropDrag::Rect {
+                        CropRect {
+                            x: (start_rect.x + nd.x).clamp(0.0, 1.0 - start_rect.width),
+                            y: (start_rect.y + nd.y).clamp(0.0, 1.0 - start_rect.height),
+                            ..start_rect
+                        }
+                    } else if let Some(r) = ratio {
+                        let (mx, my) = norm(pos);
+                        ratio_resize(self.crop_drag, start_rect, (mx, my), r)
+                    } else {
+                        free_resize(self.crop_drag, start_rect, nd)
+                    };
                     self.crop_rect = Some(crop);
                     self.params.crop = Some(crop);
                     self.dirty = true;
-                } else {
-                    // Mouse released
-                    self.crop_drag = CropDrag::None;
-                    self.crop_drag_start = None;
-                    self.crop_drag_rect = None;
                 }
             } else {
-                // Not dragging - check hover for handle detection
-                if let Some(pos) = pointer {
-                    let handle = self.crop_handle_at(pos, crop, frame);
-                    if handle != CropDrag::None {
-                        response.ctx.set_cursor_icon(match handle {
-                            CropDrag::TL | CropDrag::BR => egui::CursorIcon::ResizeNwSe,
-                            CropDrag::TR | CropDrag::BL => egui::CursorIcon::ResizeNeSw,
-                            CropDrag::T | CropDrag::B => egui::CursorIcon::ResizeVertical,
-                            CropDrag::L | CropDrag::R => egui::CursorIcon::ResizeHorizontal,
-                            CropDrag::Rect => egui::CursorIcon::Move,
-                            CropDrag::None => egui::CursorIcon::Default,
-                        });
-                    }
-
-                    // Start drag on click
-                    if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
-                        let handle = self.crop_handle_at(pos, crop, frame);
-                        if handle != CropDrag::None {
-                            self.crop_drag = handle;
-                            self.crop_drag_start = Some(pos);
-                            self.crop_drag_rect = Some(crop);
-                        }
-                    }
-                }
+                self.crop_drag = CropDrag::None;
+                self.crop_drag_start = None;
+                self.crop_drag_rect = None;
             }
+            return;
         }
+
+        if !frame.contains(pos) {
+            return;
+        }
+
+        // Not dragging: hovering a handle shows the resize/move cursor; a press
+        // starts a move/resize on a handle, or draws a fresh rect on empty space.
+        if let Some(crop) = self.crop_rect {
+            let handle = self.crop_handle_at(pos, crop, frame);
+            response.ctx.set_cursor_icon(match handle {
+                CropDrag::TL | CropDrag::BR => egui::CursorIcon::ResizeNwSe,
+                CropDrag::TR | CropDrag::BL => egui::CursorIcon::ResizeNeSw,
+                CropDrag::T | CropDrag::B => egui::CursorIcon::ResizeVertical,
+                CropDrag::L | CropDrag::R => egui::CursorIcon::ResizeHorizontal,
+                CropDrag::Rect => egui::CursorIcon::Move,
+                CropDrag::None | CropDrag::Draw => egui::CursorIcon::Default,
+            });
+            if primary_down && handle != CropDrag::None && !self.crop_pan {
+                self.crop_drag = handle;
+                self.crop_drag_start = Some(pos);
+                self.crop_drag_rect = Some(crop);
+            }
+        } else if primary_down {
+            // No crop yet: a drag draws one. Once a crop exists, dragging
+            // outside it pans the image instead.
+            self.begin_crop_draw(pos);
+        }
+    }
+
+    fn begin_crop_draw(&mut self, pos: Pos2) {
+        self.crop_drag = CropDrag::Draw;
+        self.crop_drag_start = Some(pos);
+        self.crop_drag_rect = None;
+        self.crop_rect = None;
+    }
+
+    fn crop_from_drag(&self, a: Pos2, b: Pos2, frame: Rect) -> CropRect {
+        let min = a.min(b);
+        let max = a.max(b);
+        let x = ((min.x - frame.left()) / frame.width()).clamp(0.0, 1.0);
+        let y = ((min.y - frame.top()) / frame.height()).clamp(0.0, 1.0);
+        let right = ((max.x - frame.left()) / frame.width()).clamp(0.0, 1.0);
+        let bottom = ((max.y - frame.top()) / frame.height()).clamp(0.0, 1.0);
+        CropRect {
+            x,
+            y,
+            width: (right - x).max(0.0),
+            height: (bottom - y).max(0.0),
+        }
+    }
+
+    /// Fractional width/height ratio (in normalized 0..1 crop space) for the
+    /// selected aspect + orientation, or `None` when the aspect is Free.
+    fn constrained_frac_ratio(&self) -> Option<f32> {
+        if self.crop_aspect.is_free() {
+            return None;
+        }
+        let (iw, ih) = self.current_size()?;
+        let pixel = self.target_crop_ratio(iw as f32, ih as f32);
+        Some(pixel * (ih as f32 / iw as f32))
     }
 
     fn crop_handle_at(&self, pos: Pos2, crop: CropRect, frame: Rect) -> CropDrag {
@@ -2100,6 +2300,7 @@ impl eframe::App for EmulsionApp {
             .show(ui, |ui| self.stage(ui));
 
         self.paint_toast(ui);
+        self.export_modal(ui);
     }
 }
 
@@ -2365,89 +2566,262 @@ fn rotate_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
     if ui.add(btn("90R")).clicked() {
         params.rotate_90 = (params.rotate_90 + 1) % 4;
     }
+    let flip = egui::Button::new(RichText::new("FLIP").size(12.0).color(
+        if params.flip_horizontal {
+            ACCENT
+        } else {
+            MUTED
+        },
+    ))
+    .fill(if params.flip_horizontal {
+        ACCENT_SOFT
+    } else {
+        Color32::TRANSPARENT
+    })
+    .stroke(Stroke::new(
+        1.0,
+        if params.flip_horizontal {
+            ACCENT_LINE
+        } else {
+            LINE
+        },
+    ))
+    .corner_radius(6.0)
+    .min_size(vec2(52.0, 28.0));
+    if ui.add(flip).clicked() {
+        params.flip_horizontal = !params.flip_horizontal;
+    }
     ui.add_space(4.0);
 }
 
-fn crop_controls(app: &mut EmulsionApp, ui: &mut egui::Ui, params: &mut PipelineParams) -> bool {
-    let mut close = false;
-    let apply = egui::Button::new(RichText::new("✓ Apply").size(12.5).color(Color32::WHITE))
-        .fill(ACCENT)
-        .stroke(Stroke::NONE)
-        .corner_radius(6.0)
-        .min_size(vec2(84.0, 30.0));
-    if ui.add(apply).clicked() {
-        params.crop = app.crop_rect;
-        app.crop_backup = app.crop_rect;
-        app.show_toast("Crop applied");
-        close = true;
-    }
+fn crop_controls(app: &mut EmulsionApp, ui: &mut egui::Ui, params: &mut PipelineParams) {
+    ui.allocate_ui_with_layout(
+        vec2(ui.available_width(), 50.0),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.allocate_ui_with_layout(
+                vec2(140.0, 50.0),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.label(RichText::new("Crop").size(14.0).strong().color(TEXT));
+                },
+            );
+            ui.add_space(18.0);
 
-    let cancel = egui::Button::new(RichText::new("✕ Cancel").size(12.5).color(MUTED))
-        .fill(Color32::TRANSPARENT)
-        .stroke(Stroke::new(1.0, LINE))
-        .corner_radius(6.0)
-        .min_size(vec2(84.0, 30.0));
-    if ui.add(cancel).clicked() {
-        params.crop = app.crop_backup;
-        app.crop_rect = app.crop_backup;
-        app.crop_drag = CropDrag::None;
-        close = true;
-    }
-
-    ui.add_space(14.0);
-    ui.label(RichText::new("ASPECT RATIO").size(10.5).strong().color(DIM));
-    let mut aspect = app.crop_aspect;
-    egui::ComboBox::from_id_salt("crop_aspect")
-        .selected_text(aspect.label())
-        .width(92.0)
-        .show_ui(ui, |ui| {
-            for option in CropAspect::ALL {
-                ui.selectable_value(&mut aspect, option, option.label());
+            let mut aspect = app.crop_aspect;
+            egui::ComboBox::from_id_salt("crop_aspect")
+                .selected_text(aspect.label())
+                .width(92.0)
+                .show_ui(ui, |ui| {
+                    for option in CropAspect::ALL {
+                        ui.selectable_value(&mut aspect, option, option.label());
+                    }
+                });
+            if aspect != app.crop_aspect {
+                app.crop_aspect = aspect;
+                if !aspect.is_free() {
+                    app.reshape_crop(params);
+                }
             }
-        });
-    if aspect != app.crop_aspect {
-        app.crop_aspect = aspect;
-        app.reshape_crop(params);
-    }
 
-    ui.add_space(12.0);
-    ui.label(RichText::new("ORIENTATION").size(10.5).strong().color(DIM));
-    let mut orientation = app.crop_orientation;
-    egui::ComboBox::from_id_salt("crop_orientation")
-        .selected_text(match orientation {
-            Orientation::Portrait => "Portrait",
-            Orientation::Landscape => "Landscape",
-        })
-        .width(104.0)
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut orientation, Orientation::Portrait, "Portrait");
-            ui.selectable_value(&mut orientation, Orientation::Landscape, "Landscape");
-        });
-    if orientation != app.crop_orientation {
-        app.crop_orientation = orientation;
-        app.reshape_crop(params);
-    }
+            ui.add_space(12.0);
+            let mut orientation = app.crop_orientation;
+            egui::ComboBox::from_id_salt("crop_orientation")
+                .selected_text(match orientation {
+                    Orientation::Portrait => "Portrait",
+                    Orientation::Landscape => "Landscape",
+                })
+                .width(104.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut orientation, Orientation::Portrait, "Portrait");
+                    ui.selectable_value(&mut orientation, Orientation::Landscape, "Landscape");
+                });
+            if orientation != app.crop_orientation {
+                app.crop_orientation = orientation;
+                if !app.crop_aspect.is_free() {
+                    app.reshape_crop(params);
+                }
+            }
 
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        let reset = ui
-            .add(
-                egui::Button::new(RichText::new("↺").size(16.0).color(DIM))
-                    .fill(Color32::TRANSPARENT)
-                    .stroke(Stroke::NONE)
-                    .corner_radius(6.0)
-                    .min_size(vec2(30.0, 30.0)),
-            )
-            .on_hover_text("Reset crop");
-        if reset.clicked() {
-            params.crop = None;
-            app.crop_rect = None;
-            app.crop_backup = None;
-            app.crop_drag = CropDrag::None;
-            app.crop_drag_start = None;
-            app.crop_drag_rect = None;
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let reset = ui
+                    .add(
+                        egui::Button::new(RichText::new("\u{21ba}").size(15.0).color(DIM))
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::NONE)
+                            .corner_radius(6.0)
+                            .min_size(vec2(28.0, 28.0)),
+                    )
+                    .on_hover_text("Reset crop");
+                if reset.clicked() {
+                    params.crop = None;
+                    app.crop_rect = None;
+                    app.crop_drag = CropDrag::None;
+                    app.crop_drag_start = None;
+                    app.crop_drag_rect = None;
+                }
+            });
+        },
+    );
+}
+
+fn normalize_crop(cr: CropRect) -> Option<CropRect> {
+    if cr.width < 0.02 || cr.height < 0.02 {
+        return None;
+    }
+    if cr.x <= 0.001 && cr.y <= 0.001 && cr.width >= 0.999 && cr.height >= 0.999 {
+        return None;
+    }
+    Some(cr)
+}
+
+fn free_resize(handle: CropDrag, start: CropRect, nd: Vec2) -> CropRect {
+    let mut crop = start;
+    match handle {
+        CropDrag::Rect => {
+            crop.x = (start.x + nd.x).clamp(0.0, 1.0 - start.width);
+            crop.y = (start.y + nd.y).clamp(0.0, 1.0 - start.height);
         }
-    });
-    close
+        CropDrag::TL => {
+            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
+            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
+            crop.width = (start.width - nd.x).max(0.01);
+            crop.height = (start.height - nd.y).max(0.01);
+        }
+        CropDrag::TR => {
+            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
+            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
+            crop.height = (start.height - nd.y).max(0.01);
+        }
+        CropDrag::BL => {
+            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
+            crop.width = (start.width - nd.x).max(0.01);
+            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
+        }
+        CropDrag::BR => {
+            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
+            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
+        }
+        CropDrag::T => {
+            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
+            crop.height = (start.height - nd.y).max(0.01);
+        }
+        CropDrag::B => {
+            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
+        }
+        CropDrag::L => {
+            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
+            crop.width = (start.width - nd.x).max(0.01);
+        }
+        CropDrag::R => {
+            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
+        }
+        CropDrag::None | CropDrag::Draw => {}
+    }
+    crop
+}
+
+/// Resize a handle while keeping width/height = `r`, anchored so the opposite
+/// corner (or edge) stays put.
+fn ratio_resize(handle: CropDrag, start: CropRect, mouse: (f32, f32), r: f32) -> CropRect {
+    let (mx, my) = mouse;
+    let cx = start.x + start.width * 0.5;
+    let cy = start.y + start.height * 0.5;
+    let (x, y, mut w, mut h) = match handle {
+        CropDrag::BR => {
+            let w = (mx - start.x).max(0.0);
+            (start.x, start.y, w, w / r)
+        }
+        CropDrag::TL => {
+            let ax = start.x + start.width;
+            let ay = start.y + start.height;
+            let w = (ax - mx).max(0.0);
+            (ax - w, ay - w / r, w, w / r)
+        }
+        CropDrag::TR => {
+            let ax = start.x;
+            let ay = start.y + start.height;
+            let w = (mx - ax).max(0.0);
+            (ax, ay - w / r, w, w / r)
+        }
+        CropDrag::BL => {
+            let ax = start.x + start.width;
+            let ay = start.y;
+            let w = (ax - mx).max(0.0);
+            (ax - w, ay, w, w / r)
+        }
+        CropDrag::T => {
+            let ay = start.y + start.height;
+            let h = (ay - my).max(0.0);
+            (cx - h * r * 0.5, ay - h, h * r, h)
+        }
+        CropDrag::B => {
+            let ay = start.y;
+            let h = (my - ay).max(0.0);
+            (cx - h * r * 0.5, ay, h * r, h)
+        }
+        CropDrag::L => {
+            let ax = start.x + start.width;
+            let w = (ax - mx).max(0.0);
+            (ax - w, cy - w / r * 0.5, w, w / r)
+        }
+        CropDrag::R => {
+            let ax = start.x;
+            let w = (mx - ax).max(0.0);
+            (ax, cy - w / r * 0.5, w, w / r)
+        }
+        CropDrag::None | CropDrag::Rect | CropDrag::Draw => {
+            (start.x, start.y, start.width, start.height)
+        }
+    };
+    if w > 1.0 {
+        w = 1.0;
+        h = w / r;
+    }
+    if h > 1.0 {
+        h = 1.0;
+        w = h * r;
+    }
+    CropRect {
+        x: x.clamp(0.0, (1.0 - w).max(0.0)),
+        y: y.clamp(0.0, (1.0 - h).max(0.0)),
+        width: w,
+        height: h,
+    }
+}
+
+/// Draw a fresh rect from `anchor` toward `mouse`, keeping width/height = `r`
+/// and staying inside the unit square.
+fn ratio_draw(anchor: (f32, f32), mouse: (f32, f32), r: f32) -> CropRect {
+    let (ax, ay) = anchor;
+    let (mx, my) = mouse;
+    let sx = if mx < ax { -1.0 } else { 1.0 };
+    let sy = if my < ay { -1.0 } else { 1.0 };
+    let mut w = (mx - ax).abs();
+    let mut h = (my - ay).abs();
+    if w / r >= h {
+        h = w / r;
+    } else {
+        w = h * r;
+    }
+    let max_w = if sx > 0.0 { 1.0 - ax } else { ax };
+    let max_h = if sy > 0.0 { 1.0 - ay } else { ay };
+    if w > max_w {
+        w = max_w.max(0.0);
+        h = w / r;
+    }
+    if h > max_h {
+        h = max_h.max(0.0);
+        w = h * r;
+    }
+    let x = if sx > 0.0 { ax } else { ax - w };
+    let y = if sy > 0.0 { ay } else { ay - h };
+    CropRect {
+        x: x.clamp(0.0, 1.0),
+        y: y.clamp(0.0, 1.0),
+        width: w,
+        height: h,
+    }
 }
 
 fn tool_tab(ui: &mut egui::Ui, label: &str, active: bool, changed: bool) -> egui::Response {

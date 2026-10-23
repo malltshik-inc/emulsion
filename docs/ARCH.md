@@ -44,12 +44,12 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `is_supported(path)` is the shared extension filter |
 | `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
 | `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
-| `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `downscale` (box average) |
+| `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `flip_horizontal`, `downscale` (box average) |
 | `film.rs` | bundled film simulations: generated `FILMS` registry, lazy decoded `HaldLut` cache, trilinear sampling |
-| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate → invert+exposure → contrast/saturation → film LUT) |
+| `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate/flip → invert+exposure → contrast/shadows/highlights/saturation → film LUT → vignette) |
 | `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params + film name) |
 | `error.rs` | `CoreError`, `Result<T>` = `std::result::Result<T, CoreError>` |
-| `tests.rs` | 32 unit tests, one per op (incl. robust-bounds, inversion, Hald and sidecar tests) |
+| `tests.rs` | 37 unit tests, one per op (incl. robust-bounds, inversion, conversion baseline, Hald and sidecar tests) |
 
 `build.rs` scans `assets/film/{bw,color}/*.png` and emits `film_registry.rs`
 (`include_bytes!` per LUT), so adding a PNG is enough to make it appear in the UI.
@@ -82,8 +82,8 @@ with two `Ctrl+=` presses — so fonts and widgets start ~20% larger.
 
 Workflow in `App::ui` each frame:
 1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
-2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`.
-3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` each cached thumbnail base with that file's params (the selected row uses the live `params`) and upload it.
+2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
+3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` and upload only the rows whose params differ from the cached `thumb_params` (the selected row uses the live `params`), so dragging one file's sliders does not rebuild all rows.
 4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
    central canvas); each panel calls its own method on `self` (keeps the egui
    closures single-capture).
@@ -107,15 +107,26 @@ source
               crop               fractional rect  (params.crop)
               rotate 90°         u8 0..3 quarter turns
               fine angle         bilinear around center, white fill outside
+              flip horizontal    left column <-> right column
               ─ encode to display values ─
               positive           exposure (2^EV linear), then sRGB gamma
               negative           sRGB-encode the negative, 1 − encoded, decode to
-                                 linear, ×gains×2^EV, re-encode
-              contrast           smoothstep S-curve blended by contrast/100
-              saturation         scale distance from Rec.709 luma by 1+sat/100
+                                 linear, ×(gains+WB baseline)×2^(EV+EV baseline), re-encode
+              contrast           smoothstep S-curve blended by (contrast+baseline)/100
+              shadows/highlights squared-weight lift/lower of the dark/bright ends
+              saturation         scale distance from Rec.709 luma by 1+(sat+baseline)/100
               film LUT           trilinear sample of the selected Hald CLUT
               quantize           round → u8, alpha 255
+              vignette           radial corner darken/brighten on the 8-bit result
 ```
+
+The **negative → positive conversion has a built-in baseline** (EV +1.4,
+WB temperature +80, contrast +82, saturation +20; constants in `tonemap.rs`).
+Without it the conversion is too dark and too pale. The baseline is added on top
+of the slider values in the invert path only, so the sliders stay offsets
+(0 = baseline) and the positive path is untouched. `develop_defaults_apply_conversion_baseline`
+pins this: a neutral invert must equal the tuned look, and cancelling the offsets
+must be visibly darker/flatter.
 
 Film LUTs run last (RawTherapee convention) on sRGB-encoded values, in both the
 positive and inverted paths. The decoded cube is cached per id in a process-wide
@@ -166,9 +177,11 @@ values before the gamma encode lifts the midtones and flattens the print — the
 "pale and too bright" look, and why −EV alone only made it grey. `develop` now
 inverts the sRGB-encoded negative (`1 − encode(t)`) and applies WB/exposure to
 the decoded positive afterwards. This keeps blacks black and gives the sliders
-positive semantics (+EV brightens, +temperature warms). It is still a plain
-per-channel inversion: a film toe/shoulder curve and saturation recovery are not
-implemented yet (see TODO).
+positive semantics (+EV brightens, +temperature warms). A fixed conversion
+baseline (EV +1.4, WB +80, contrast +82, saturation +20) is added on top of the
+sliders so the default conversion is usable instead of dark and pale. It is still
+a plain per-channel inversion: a film toe/shoulder curve and saturation recovery
+are not implemented yet (see TODO).
 
 ---
 
@@ -327,8 +340,6 @@ None of this is wired into the UI yet (see 8).
    the owner's machine* (Olympus E-M5 Mark II, incl. high-res 9280×6932 16-bit mode —
    decode ≈ 1–2 s). Other makes are untested.
 8. **Not in the UI yet** (core supports the mechanism, UI wiring pending):
-   - crop tool (marquee + handles + aspect lock) — `params.crop` + `geometry::crop`
-     already implemented
    - undo history (params stack)
    - patch-file autosave/restore and presets
    - persist last folder / last export settings (OS config JSON, per PRODUCT.md)
@@ -386,11 +397,11 @@ managed-runtime (Java/Kotlin) reviewer's perspective.
 
 ## 10. Verification
 
-- `cargo test` — 32 core unit tests (every op + serde roundtrip + sidecar JSON +
-  Hald identity/geometry + film registry + B&W desaturation + demosaic shape +
-  downscale + develop-invert integration + post-invert exposure/WB direction +
-  contrast/saturation response).
-- `cargo fmt`, `cargo clippy` — `fmt` clean; clippy emits style suggestions only.
+- `cargo test` — 37 core unit tests (every op + serde roundtrip + sidecar JSON +
+  Hald identity/geometry + film registry + B&W desaturation + conversion baseline +
+  demosaic shape + downscale + develop-invert integration + post-invert
+  exposure/WB direction + contrast/saturation response).
+- `cargo fmt`, `cargo clippy` — both clean across the workspace.
 - Manual smoke: `cargo build --release && target\release\emulsion-app.exe` — open
   a folder with ORF/ARW files, click a file, drag sliders, `Export…`.
 - Spike baseline: `target\release\develop.exe <in.orf> <out.png> [--invert] [--ev N] [--contrast N] [--saturation N]` matches

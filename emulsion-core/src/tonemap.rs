@@ -3,7 +3,7 @@ use rayon::prelude::*;
 use crate::{
     colorops::{apply_black_point, apply_exposure, apply_wb, wb_gains},
     film::{self, HaldLut},
-    geometry::{crop as crop_image, rotate_90, rotate_fine},
+    geometry::{crop as crop_image, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
 };
@@ -14,6 +14,16 @@ const LINEAR_GAIN: f32 = 12.92;
 const SRGB_GAIN: f32 = 1.055;
 const SRGB_OFFSET: f32 = 0.055;
 const SRGB_GAMMA: f32 = 2.4;
+
+// Baseline for the negative -> positive conversion. A neutral scan converted
+// with these offsets is the tuned "good" default; without them the result is
+// too dark and too pale. The UI sliders remain offsets on top of this baseline
+// (a slider at 0 means "baseline", not "none"), so the positive path and the
+// per-image patches are unchanged.
+const CONVERSION_BASELINE_EV: f32 = 1.4;
+const CONVERSION_BASELINE_WB: f32 = 80.0;
+const CONVERSION_BASELINE_CONTRAST: f32 = 82.0;
+const CONVERSION_BASELINE_SATURATION: f32 = 20.0;
 
 fn srgb_encode(v: f32) -> f32 {
     if v <= SRGB_CROSSOVER {
@@ -31,19 +41,37 @@ fn srgb_decode(v: f32) -> f32 {
     }
 }
 
-/// Contrast and saturation, applied to sRGB-encoded values.
+/// Contrast, shadows/highlights and saturation, applied to sRGB-encoded values.
 ///
 /// Contrast is a smooth S-curve blended by `contrast/100`: positive values
 /// steepen the midtones (without clipping), negative values flatten them
-/// toward mid-grey. Saturation scales the distance from Rec.709 luma by
+/// toward mid-grey. Shadows/highlights lift/lower the dark/bright ends with a
+/// squared weight. Saturation scales the distance from Rec.709 luma by
 /// `1 + saturation/100` (0 = greyscale, 2 = double saturation).
-fn apply_look(mut rgb: [f32; 3], contrast: f32, saturation: f32) -> [f32; 3] {
+fn apply_look(
+    mut rgb: [f32; 3],
+    contrast: f32,
+    saturation: f32,
+    shadows: f32,
+    highlights: f32,
+) -> [f32; 3] {
     let amount = (contrast / 100.0).clamp(-1.0, 1.0);
     if amount != 0.0 {
         for v in &mut rgb {
             let x = v.clamp(0.0, 1.0);
             let s_curve = x * x * (3.0 - 2.0 * x);
             *v = (x + (s_curve - x) * amount).clamp(0.0, 1.0);
+        }
+    }
+
+    let sh = (shadows / 100.0).clamp(-1.0, 1.0);
+    let hi = (highlights / 100.0).clamp(-1.0, 1.0);
+    if sh != 0.0 || hi != 0.0 {
+        for v in &mut rgb {
+            let x = v.clamp(0.0, 1.0);
+            let shadow_w = (1.0 - x) * (1.0 - x);
+            let highlight_w = x * x;
+            *v = (x + sh * 0.5 * shadow_w + hi * 0.5 * highlight_w).clamp(0.0, 1.0);
         }
     }
 
@@ -67,13 +95,15 @@ fn write_rgba(rgb: [f32; 3], rgba: &mut [u8]) {
 /// Convert a linear-light `LinearImage` to an 8-bit `RgbaImage`,
 /// applying the sRGB gamma (the final step of the pipeline).
 pub fn tonemap_and_quantize(img: &LinearImage, out: &mut RgbaImage) {
-    tonemap_and_quantize_look(img, 0.0, 0.0, None, out);
+    tonemap_and_quantize_look(img, 0.0, 0.0, 0.0, 0.0, None, out);
 }
 
 fn tonemap_and_quantize_look(
     img: &LinearImage,
     contrast: f32,
     saturation: f32,
+    shadows: f32,
+    highlights: f32,
     film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
@@ -88,7 +118,7 @@ fn tonemap_and_quantize_look(
                 srgb_encode(src[pix + 1].clamp(0.0, 1.0)),
                 srgb_encode(src[pix + 2].clamp(0.0, 1.0)),
             ];
-            let mut rgb = apply_look(encoded, contrast, saturation);
+            let mut rgb = apply_look(encoded, contrast, saturation, shadows, highlights);
             if let Some(lut) = film {
                 rgb = lut.sample(rgb);
             }
@@ -103,6 +133,9 @@ fn tonemap_and_quantize_look(
 /// Black point stays *before* inversion (PRODUCT.md §8: it removes the
 /// negative's orange mask). Exposure is applied *after* inversion so +EV
 /// brightens the displayed positive rather than darkening it.
+///
+/// The invert path adds the conversion baseline (EV, WB, contrast, saturation)
+/// on top of the slider values, so a neutral scan converts to a good default.
 pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     let gains = wb_gains(params.wb_temperature, params.wb_tint);
     let mut working = base.clone();
@@ -124,14 +157,21 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     if params.fine_angle != 0.0 {
         img = rotate_fine(&img, params.fine_angle);
     }
+    if params.flip_horizontal {
+        img = flip_horizontal(&img);
+    }
 
     let film = params.film.and_then(|id| film::lut(id).ok());
     let mut out = RgbaImage::new(img.width, img.height);
     if params.invert {
+        let conversion_gains = wb_gains(
+            params.wb_temperature + CONVERSION_BASELINE_WB,
+            params.wb_tint,
+        );
         invert_negative(
             &img,
-            &gains,
-            params.exposure,
+            &conversion_gains,
+            params.exposure + CONVERSION_BASELINE_EV,
             params,
             film.as_deref(),
             &mut out,
@@ -142,9 +182,14 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
             &img,
             params.contrast,
             params.saturation,
+            params.shadows,
+            params.highlights,
             film.as_deref(),
             &mut out,
         );
+    }
+    if params.vignette != 0.0 {
+        apply_vignette(&mut out, params.vignette);
     }
     out
 }
@@ -179,10 +224,42 @@ fn invert_negative(
                 let lin = (srgb_decode(pos) * gains[c] * exposure).clamp(0.0, 1.0);
                 *value = srgb_encode(lin);
             }
-            let mut rgb = apply_look(encoded, params.contrast, params.saturation);
+            let mut rgb = apply_look(
+                encoded,
+                params.contrast + CONVERSION_BASELINE_CONTRAST,
+                params.saturation + CONVERSION_BASELINE_SATURATION,
+                params.shadows,
+                params.highlights,
+            );
             if let Some(lut) = film {
                 rgb = lut.sample(rgb);
             }
             write_rgba(rgb, rgba);
+        });
+}
+
+/// Darken (positive) or brighten (negative) the corners with a radial falloff.
+fn apply_vignette(img: &mut RgbaImage, amount: f32) {
+    let w = img.width;
+    let h = img.height;
+    if w < 2 || h < 2 {
+        return;
+    }
+    let a = (amount / 100.0).clamp(-1.0, 1.0);
+    let cx = (w - 1) as f32 / 2.0;
+    let cy = (h - 1) as f32 / 2.0;
+    let max_d = (cx * cx + cy * cy).sqrt().max(f32::EPSILON);
+    img.data
+        .par_chunks_exact_mut(4)
+        .enumerate()
+        .for_each(|(i, px)| {
+            let x = (i % w) as f32;
+            let y = (i / w) as f32;
+            let d = ((x - cx) * (x - cx) + (y - cy) * (y - cy)).sqrt() / max_d;
+            let fall = (d * d).clamp(0.0, 1.0);
+            let f = (1.0 - a * 0.9 * fall).max(0.0);
+            px[0] = (px[0] as f32 * f).round() as u8;
+            px[1] = (px[1] as f32 * f).round() as u8;
+            px[2] = (px[2] as f32 * f).round() as u8;
         });
 }

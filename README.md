@@ -12,13 +12,17 @@ target\release\emulsion-app.exe
 
 - **Open folder…** → all images in it (recursive)
 - Click an image → live preview; each file keeps its own settings
-- Film simulations: searchable strip of bundled colour + B&W Hald CLUTs
+- **Develop** (top strip) flips negative→positive with a built-in baseline
+  (EV +1.4, WB +80, contrast +82, saturation +20) so a neutral scan converts well
+- **Simulations** tab: searchable strip of bundled colour + B&W Hald CLUTs
   (RawTherapee collection; attribution in `emulsion-core/assets/film/`)
-- Five sliders (white balance, tint, EV, contrast, saturation), invert, rotate 90° + fine angle
+- Sliders: white balance, tint, EV, contrast, shadows, highlights, saturation, vignette;
+  rotate 90° + fine angle + flip horizontal
+- Copy/Paste buttons apply one photo's settings to others
 - Double-click a slider to reset it
 - Wheel-zoom, drag-pan, Space to recenter.
-- **Export…** → full-res JPEG/PNG named after the source, plus a
-  `<name>.emulsion.json` sidecar with the exact settings used (originals never touched)
+- **Export…** → dialog: *This photo* (full-res JPEG/PNG named after the source) or
+  *All edited photos* (PNG batch to a folder); originals never touched
 
 CLI for testing/batch: `target\release\develop.exe <in.orf> <out.png> [--invert]`
 
