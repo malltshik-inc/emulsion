@@ -5,7 +5,7 @@ Simple UI, precise color. Windows, macOS and Linux.
 
 ## Install
 
-Prebuilt packages are attached to each [release](https://github.com/malltshik/emulsion/releases/latest):
+Prebuilt packages are attached to each [release](https://github.com/malltshik-inc/emulsion/releases/latest):
 
 - **Windows** — `.msi` installer (double-click).
 - **macOS** — `.dmg` (open, drag Emulsion to Applications). The build is unsigned,
@@ -17,7 +17,7 @@ Linux one-liner (replace the file name with the one shown on the Releases page):
 
 ```sh
 curl -fsSL -o emulsion.deb \
-  https://github.com/malltshik/emulsion/releases/latest/download/emulsion_0.1.0_amd64.deb \
+  https://github.com/malltshik-inc/emulsion/releases/latest/download/emulsion_0.1.0_amd64.deb \
   && sudo apt install -y ./emulsion.deb
 ```
 

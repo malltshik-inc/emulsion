@@ -23,14 +23,17 @@ jobs:
             formats: msi
             artifact: emulsion-windows
             binary: target/release/emulsion-app.exe
+            binary_name: emulsion-windows.exe
           - os: macos-latest
             formats: dmg
             artifact: emulsion-macos
             binary: target/release/emulsion-app
+            binary_name: emulsion-macos
           - os: ubuntu-latest
             formats: deb
             artifact: emulsion-linux
             binary: target/release/emulsion-app
+            binary_name: emulsion-linux
 
     steps:
       - uses: actions/checkout@v4
@@ -63,24 +66,31 @@ jobs:
         working-directory: emulsion-app
         run: cargo packager --release --formats ${{ matrix.formats }}
 
-      - name: Upload installer
+      - name: Collect outputs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p dist
+          for ext in dmg msi deb AppImage; do
+            find . -type f -name "*.${ext}" -exec cp {} dist/ \; || true
+          done
+          if [ -f "${{ matrix.binary }}" ]; then
+            cp "${{ matrix.binary }}" "dist/${{ matrix.binary_name }}"
+          fi
+          echo "--- dist ---"
+          ls -la dist || true
+
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}-installer
-          path: target/packages/*
+          name: ${{ matrix.artifact }}
+          path: dist/*
           if-no-files-found: warn
 
-      - name: Upload raw binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}-binary
-          path: ${{ matrix.binary }}
-          if-no-files-found: error
-
       - name: Attach to GitHub Release
-        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        if: always() && (github.event_name == 'release' || startsWith(github.ref, 'refs/tags/'))
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            target/packages/*
-            ${{ matrix.binary }}
+          files: dist/*
+          fail_on_unmatched_files: false
