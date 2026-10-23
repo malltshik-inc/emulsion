@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use eframe::egui;
 use egui::{
@@ -949,10 +949,9 @@ impl EmulsionApp {
             StrokeKind::Inside,
         );
 
-        let word_y = center_y + 6.0;
-        let word_font = FontId::new(22.0, self.wordmark_family.clone());
+        let word_font = FontId::new(20.0, self.wordmark_family.clone());
         painter.text(
-            pos2(logo_rect.right() + 10.0, word_y),
+            pos2(logo_rect.right() + 10.0, center_y),
             Align2::LEFT_CENTER,
             "Emulsion",
             word_font.clone(),
@@ -2306,46 +2305,36 @@ impl eframe::App for EmulsionApp {
 
 fn install_fonts(ctx: &egui::Context) -> FontFamily {
     let mut fonts = egui::FontDefinitions::default();
-
-    if let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\segoeui.ttf") {
-        fonts.font_data.insert(
-            "emulsion-ui".to_owned(),
-            Arc::new(egui::FontData::from_owned(bytes)),
-        );
-        if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-            family.insert(0, "emulsion-ui".to_owned());
-        }
+    fonts.font_data.insert(
+        "emulsion-ui".to_owned(),
+        Arc::new(egui::FontData::from_owned(
+            include_bytes!("../assets/fonts/Ubuntu-Regular.ttf").to_vec(),
+        )),
+    );
+    fonts.font_data.insert(
+        "emulsion-wordmark".to_owned(),
+        Arc::new(egui::FontData::from_owned(
+            include_bytes!("../assets/fonts/Ubuntu-Medium.ttf").to_vec(),
+        )),
+    );
+    fonts.font_data.insert(
+        "emulsion-mono".to_owned(),
+        Arc::new(egui::FontData::from_owned(
+            include_bytes!("../assets/fonts/UbuntuMono-Regular.ttf").to_vec(),
+        )),
+    );
+    if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
+        family.insert(0, "emulsion-ui".to_owned());
     }
-    if let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\consola.ttf") {
-        fonts.font_data.insert(
-            "emulsion-mono".to_owned(),
-            Arc::new(egui::FontData::from_owned(bytes)),
-        );
-        if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
-            family.insert(0, "emulsion-mono".to_owned());
-        }
-    }
-
-    let mut serif = Vec::new();
-    for (key, path) in [
-        ("emulsion-serif", r"C:\Windows\Fonts\pala.ttf"),
-        ("emulsion-serif-alt", r"C:\Windows\Fonts\georgia.ttf"),
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert(key.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
-            serif.push(key.to_owned());
-        }
+    if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
+        family.insert(0, "emulsion-mono".to_owned());
     }
 
-    let family = if serif.is_empty() {
-        FontFamily::Proportional
-    } else {
-        let family = FontFamily::Name("emulsion-serif".into());
-        fonts.families.insert(family.clone(), serif);
-        family
-    };
+    let family = FontFamily::Name("emulsion-serif".into());
+    fonts.families.insert(
+        family.clone(),
+        vec!["emulsion-wordmark".to_owned(), "emulsion-ui".to_owned()],
+    );
 
     ctx.set_fonts(fonts);
     family

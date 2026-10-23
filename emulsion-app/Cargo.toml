@@ -9,3 +9,9 @@ eframe = "0.37.0"
 egui = "0.37.0"
 image = "0.25.10"
 rfd = "0.17.2"
+
+[package.metadata.packager]
+before-packaging-command = "cargo build --release -p emulsion-app"
+product-name = "Emulsion"
+identifier = "com.emulsion.app"
+icons = ["assets/icons/icon-256.png", "assets/icons/icon-512.png"]

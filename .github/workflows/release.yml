@@ -1,0 +1,86 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            formats: msi
+            artifact: emulsion-windows
+            binary: target/release/emulsion-app.exe
+          - os: macos-latest
+            formats: dmg
+            artifact: emulsion-macos
+            binary: target/release/emulsion-app
+          - os: ubuntu-latest
+            formats: deb
+            artifact: emulsion-linux
+            binary: target/release/emulsion-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libxcb-randr0-dev libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xkb-dev \
+            libgl1-mesa-dev libgtk-3-dev
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build (release)
+        run: cargo build --release --workspace
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+
+      - name: Package installer
+        working-directory: emulsion-app
+        run: cargo packager --release --formats ${{ matrix.formats }}
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-installer
+          path: target/packages/*
+          if-no-files-found: warn
+
+      - name: Upload raw binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-binary
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/packages/*
+            ${{ matrix.binary }}

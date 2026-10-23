@@ -23,10 +23,7 @@ them extremely well. It is not a general-purpose photo editor.
    way to produce a file is a deliberate export.
 3. **Fewer controls, sharper ones.** Every control must earn its place. The right six
    knobs, done precisely, beat twenty approximate ones.
-4. **"A-ha colors" over out-of-the-box correctness.** The flagship promise is that a
-   dark, orange-masked scan becomes a vivid, correct positive with near-zero effort —
-   and that the few knobs give the user power they can feel.
-5. **Fast by default.** Opening a scan and correcting it should feel instant. Waiting
+4. **Fast by default.** Opening a scan and correcting it should feel instant. Waiting
    is only acceptable for one-time decode of huge RAW files.
 
 ## 3. Who it is for
@@ -143,7 +140,7 @@ Behavior requirements (MUST):
 
 ## 8. The black points (special requirement)
 
-The R/G/B black points are the tool's core "a-ha" control. Their purpose: remove the
+The R/G/B black points remove the
 orange cast of color-negative film *before* inverting, so positive images have clean
 blacks and correct colors. They MUST automatically start from a sensible per-channel
 baseline derived from the scan itself (so a fresh open already looks close), with the

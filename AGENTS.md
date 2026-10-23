@@ -6,10 +6,10 @@ docs on demand, don't inline them.
 ## Overview
 
 Emulsion is a desktop photo editor that converts negative film scans to positive
-images. Simple UI, precise color, "a-ha colors". Rust (edition 2024 / 1.99 stdlib),
-egui 0.37 GUI, image-rs + rawler for I/O, rayon for pixel parallelism. Windows first;
-macOS/Linux later. Two crates: `emulsion-core` (pure pipeline, no GUI) and
-`emulsion-app` (egui frontend).
+images. Simple UI, precise color. Rust edition 2024,
+egui 0.37 GUI, image-rs + rawler for I/O, rayon for pixel parallelism. Windows,
+macOS and Linux (fonts are bundled; no OS-specific asset paths). Two crates:
+`emulsion-core` (pure pipeline, no GUI) and `emulsion-app` (egui frontend).
 
 **Product rules live in `docs/PRODUCT.md`** (normative). Read it before touching
 behavior. **Technical truth lives in `docs/ARCH.md`** (descriptive) — read it before

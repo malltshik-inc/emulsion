@@ -1,14 +1,47 @@
 # Emulsion
 
 Desktop photo editor that converts negative film scans into positive images.
-Simple UI, precise color, "a-ha colors". Windows first; macOS/Linux later.
+Simple UI, precise color. Windows, macOS and Linux.
 
-## Run it
+## Install
 
+Prebuilt packages are attached to each [release](https://github.com/malltshik/emulsion/releases/latest):
+
+- **Windows** — `.msi` installer (double-click).
+- **macOS** — `.dmg` (open, drag Emulsion to Applications). The build is unsigned,
+  so the first launch needs right-click → **Open**, or:
+  `xattr -dr com.apple.quarantine /Applications/Emulsion.app`
+- **Linux** — `.deb` (Debian/Ubuntu).
+
+Linux one-liner (replace the file name with the one shown on the Releases page):
+
+```sh
+curl -fsSL -o emulsion.deb \
+  https://github.com/malltshik/emulsion/releases/latest/download/emulsion_0.1.0_amd64.deb \
+  && sudo apt install -y ./emulsion.deb
 ```
-cargo build --release
-target\release\emulsion-app.exe
+
+## Build from source
+
+Needs a recent stable Rust (edition 2024). On Debian/Ubuntu install the GUI deps first:
+
+```sh
+sudo apt install libxkbcommon-dev libwayland-dev libxcb-randr0-dev \
+  libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xkb-dev libgl1-mesa-dev libgtk-3-dev
 ```
+
+```sh
+cargo build --release -p emulsion-app
+target/release/emulsion-app        # target\release\emulsion-app.exe on Windows
+```
+
+Everything the app needs is compiled in — fonts (Ubuntu, bundled under
+`emulsion-app/assets/fonts/`) and the film LUTs (`emulsion-core/assets/film/`).
+
+Build installers locally with [cargo-packager](https://github.com/crabnebula-dev/cargo-packager):
+`cd emulsion-app && cargo packager --release` (produces `.msi` / `.dmg` / `.deb`).
+
+## Features
 
 - **Open folder…** → all images in it (recursive)
 - Click an image → live preview; each file keeps its own settings

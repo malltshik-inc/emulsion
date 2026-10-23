@@ -56,6 +56,13 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 The assets are level-6 Hald CLUTs (216×216, 36³ cube) resampled from the
 RawTherapee level-12 collection; see `assets/film/ATTRIBUTION.md` (CC BY-SA 4.0).
 
+Fonts are **bundled** (Ubuntu Regular/Medium + Ubuntu Mono, UFL, under
+`emulsion-app/assets/fonts/`) and installed by `install_fonts` via
+`include_bytes!` — there are no OS font paths, so the UI is identical on every
+platform. App icons live in `emulsion-app/assets/icons/`; `[package.metadata.packager]`
+in `emulsion-app/Cargo.toml` plus `.github/workflows/release.yml` build
+`.msi`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
+
 ### emulsion-app (`emulsion-app/src/main.rs`)
 
 Single-file egui app (intentionally; split when it earns it — see Gotcha 9).
@@ -147,7 +154,7 @@ The app's folder scan uses `decode::is_supported`, so every format the decoder
 accepts is listed. Add new RAW extensions only to `RAW_EXTENSIONS` in `decode.rs`
 (a local app-side list once hid ARW files).
 
-### Why measured auto-scale (the "a-ha" core)
+### Why measured auto-scale (the core demosaic decision)
 
 The spike measured the owner's Olympus E-M5 Mark II high-res ORFs (9280×6932):
 bayer data spans only **254..910** against a sensor white level of **4000** — the raw
@@ -291,7 +298,7 @@ None of this is wired into the UI yet (see 8).
    from inside a single closure, or destructure fields out of `self` first so each
    closure captures only the field refs it needs. Multiple closures over disjoint
    fields is fine; overlapping `&mut self` is not.
-5. **`dyn` is a keyword** in this stdlib (edition 2024 / Rust 1.99). Any variable or
+5. **`dyn` is a keyword** in this stdlib (edition 2024). Any variable or
    name that used to be `dyn` must be renamed (we use `dimg` / `base`). The compiler
    suggests `` `r#dyn` `` but renaming is cleaner.
 6. **`Option::cloned()` is only on `Option<&_>`** — to pattern-match `&self.texture`
@@ -333,8 +340,7 @@ None of this is wired into the UI yet (see 8).
    crop is applied *before* rotation, so the UI should offer crop before fine angle.
 5. **WB temperature/tint sliders** are a simplified gain model
    (`1 + 0.30·t`, `1 + 0.15·m` around neutral). They are a knob, not a colourimetric
-   temperature; refining them toward a real Kelvin/CIE model is the "a-ha colors"
-   continuing work (Percept `PRODUCT.md`).
+   temperature; refining them toward a real Kelvin/CIE model is continuing work (Percept `PRODUCT.md`).
 6. **TIFF input** is downconverted to 8-bit (per PRODUCT.md); 16-bit pipeline later.
 7. **RAW support list** is the `rawler` decoder set, but *only ORF has been tested on
    the owner's machine* (Olympus E-M5 Mark II, incl. high-res 9280×6932 16-bit mode —
