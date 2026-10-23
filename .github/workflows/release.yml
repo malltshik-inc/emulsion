@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            formats: nsis
+            formats: msi nsis
             artifact: emulsion-windows
             binary: target/release/emulsion-app.exe
             binary_name: emulsion-windows.exe
@@ -52,6 +52,16 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libxcb-randr0-dev libxcb-xfixes0-dev libxcb-shape0-dev libxcb-xkb-dev \
             libgl1-mesa-dev libgtk-3-dev
+
+      - name: Install WiX Toolset (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          choco install wixtoolset -y --no-progress
+          $wix = Get-ChildItem 'C:\Program Files (x86)\WiX Toolset*\bin' -Directory -ErrorAction SilentlyContinue |
+                 Select-Object -First 1 -ExpandProperty FullName
+          if ($wix) { $wix | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+          Write-Host "WIX=$wix"
 
       - name: Test
         run: cargo test --workspace
