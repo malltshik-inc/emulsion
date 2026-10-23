@@ -14,4 +14,9 @@ rfd = "0.17.2"
 before-packaging-command = "cargo build --release -p emulsion-app"
 product-name = "Emulsion"
 identifier = "com.emulsion.app"
-icons = ["assets/icons/icon-256.png", "assets/icons/icon-512.png"]
+icons = [
+  "assets/icons/icon-256.png",
+  "assets/icons/icon-512.png",
+  "assets/icons/icon.ico",
+  "assets/icons/icon.icns",
+]

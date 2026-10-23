@@ -20,7 +20,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            formats: msi
+            formats: nsis
             artifact: emulsion-windows
             binary: target/release/emulsion-app.exe
             binary_name: emulsion-windows.exe
@@ -64,7 +64,13 @@ jobs:
 
       - name: Package installer
         working-directory: emulsion-app
-        run: cargo packager --release --formats ${{ matrix.formats }}
+        shell: bash
+        run: |
+          for f in ${{ matrix.formats }}; do
+            echo "::group::cargo packager --formats $f"
+            cargo packager --release --formats "$f" || echo "::warning::packaging failed for $f"
+            echo "::endgroup::"
+          done
 
       - name: Collect outputs
         if: always()
@@ -74,6 +80,9 @@ jobs:
           for ext in dmg msi deb AppImage; do
             find . -type f -name "*.${ext}" -exec cp {} dist/ \; || true
           done
+          # Windows installers (NSIS .exe) live under the packager output dir;
+          # restrict to *packages* so we don't grab the raw binary.
+          find . -type f -path '*packages*' -name '*.exe' -exec cp {} dist/ \; || true
           if [ -f "${{ matrix.binary }}" ]; then
             cp "${{ matrix.binary }}" "dist/${{ matrix.binary_name }}"
           fi

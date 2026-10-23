@@ -61,7 +61,7 @@ Fonts are **bundled** (Ubuntu Regular/Medium + Ubuntu Mono, UFL, under
 `include_bytes!` — there are no OS font paths, so the UI is identical on every
 platform. App icons live in `emulsion-app/assets/icons/`; `[package.metadata.packager]`
 in `emulsion-app/Cargo.toml` plus `.github/workflows/release.yml` build
-`.msi`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
+`.exe`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
 
 ### emulsion-app (`emulsion-app/src/main.rs`)
 

@@ -7,7 +7,7 @@ Simple UI, precise color. Windows, macOS and Linux.
 
 Prebuilt packages are attached to each [release](https://github.com/malltshik-inc/emulsion/releases/latest):
 
-- **Windows** — `.msi` installer (double-click).
+- **Windows** — `.exe` installer (NSIS; double-click).
 - **macOS** — `.dmg` (open, drag Emulsion to Applications). The build is unsigned,
   so the first launch needs right-click → **Open**, or:
   `xattr -dr com.apple.quarantine /Applications/Emulsion.app`
