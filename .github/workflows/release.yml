@@ -87,12 +87,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          for ext in dmg msi deb AppImage; do
-            find . -type f -name "*.${ext}" -exec cp {} dist/ \; || true
-          done
-          # Windows installers (NSIS .exe) live under the packager output dir;
-          # restrict to *packages* so we don't grab the raw binary.
-          find . -type f -path '*packages*' -name '*.exe' -exec cp {} dist/ \; || true
+          # cargo-packager writes installers next to the binary (target/release),
+          # not into target/packages. Match installer files by name only, so we
+          # don't pick up build-script binaries.
+          find . -type f \( \
+              -name '*.dmg' -o -name '*.msi' -o -name '*.deb' \
+              -o -name '*.AppImage' -o -name '*-setup.exe' \
+            \) -exec cp {} dist/ \; || true
           if [ -f "${{ matrix.binary }}" ]; then
             cp "${{ matrix.binary }}" "dist/${{ matrix.binary_name }}"
           fi
