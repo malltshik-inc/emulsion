@@ -122,8 +122,8 @@ contrast 0, saturation 0, shadows 0, highlights 0, vignette 0, no film simulatio
 rotation 0, angle 0, flip off, no crop.
 
 Conversion baseline (MUST): the negative→positive conversion adds a fixed baseline
-on top of the sliders — exposure **+1.4 EV**, white-balance temperature **+80**,
-contrast **+82**, saturation **+20** — so a neutral scan converts to a usable
+on top of the sliders — exposure **+1.4 EV**, white-balance temperature **+70**,
+contrast **+40**, saturation **+20** — so a neutral scan converts to a usable
 positive on the first Develop click instead of a dark, pale one. A slider at 0
 therefore means "the baseline", not "no adjustment", while Develop is on; the
 baseline never applies to positive (non-inverted) images.

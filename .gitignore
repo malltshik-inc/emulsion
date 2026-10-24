@@ -3,3 +3,4 @@
 **/examples/orf/*.orf
 **/examples/orf/*.png
 .idea
+.aider*

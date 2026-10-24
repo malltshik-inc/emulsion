@@ -441,7 +441,7 @@ fn develop_wb_temperature_warms_converted_negative() {
 #[test]
 fn develop_defaults_apply_conversion_baseline() {
     // The negative -> positive conversion has a built-in baseline (EV +1.4,
-    // WB +80, contrast +82, saturation +20). Neutral params must convert a
+    // WB +70, contrast +40, saturation +20). Neutral params must convert a
     // mid-grey scan to the tuned baseline look, not to a flat/dark result.
     let base = make_img(4, 4, 0.3);
     let out = develop(
@@ -691,4 +691,45 @@ fn params_film_roundtrips_and_old_patches_default_to_none() {
     value.as_object_mut().unwrap().remove("film");
     let old = serde_json::from_value::<PipelineParams>(value).unwrap();
     assert_eq!(old.film, None);
+}
+
+#[test]
+fn jpeg_quality_produces_different_output() {
+    use crate::export::save_jpeg;
+    use crate::image::RgbaImage;
+
+    // Gradient image with variation across pixels so quality matters.
+    let mut data = Vec::with_capacity(64 * 64 * 4);
+    for y in 0..64 {
+        for x in 0..64 {
+            data.push((x * 4) as u8);
+            data.push((y * 4) as u8);
+            data.push(((x + y) * 2) as u8);
+            data.push(255);
+        }
+    }
+    let img = RgbaImage {
+        width: 64,
+        height: 64,
+        data,
+    };
+
+    let path10 = std::env::temp_dir().join("emulsion_q10.jpg");
+    let path100 = std::env::temp_dir().join("emulsion_q100.jpg");
+
+    save_jpeg(path10.to_str().unwrap(), &img, 10).unwrap();
+    save_jpeg(path100.to_str().unwrap(), &img, 100).unwrap();
+
+    let size10 = std::fs::metadata(&path10).unwrap().len();
+    let size100 = std::fs::metadata(&path100).unwrap().len();
+
+    assert!(
+        size100 > size10,
+        "q100 should be larger than q10, got {} vs {}",
+        size10,
+        size100
+    );
+
+    std::fs::remove_file(&path10).ok();
+    std::fs::remove_file(&path100).ok();
 }

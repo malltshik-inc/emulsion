@@ -200,9 +200,7 @@ impl Tool {
             Self::Crop => params.crop.is_some(),
             _ => {
                 let mut copy = *params;
-                self.value_mut(&mut copy).is_some_and(|t| {
-                    *t != 0.0
-                })
+                self.value_mut(&mut copy).is_some_and(|t| *t != 0.0)
             }
         }
     }
@@ -326,6 +324,9 @@ struct EmulsionApp {
     clipboard: Option<PipelineParams>,
     export_dialog: bool,
 
+    // JPEG export quality (1..=100), default high.
+    export_quality: u8,
+
     // Crop state
     crop_rect: Option<CropRect>,      // live crop (mirrors params.crop)
     crop_drag: CropDrag,              // current drag state
@@ -381,6 +382,7 @@ impl EmulsionApp {
             dirty: true,
             clipboard: None,
             export_dialog: false,
+            export_quality: 92,
             crop_rect: None,
             crop_drag: CropDrag::None,
             crop_drag_start: None,
@@ -662,7 +664,9 @@ impl EmulsionApp {
 
     fn sync_texture(&mut self, ui: &mut egui::Ui) {
         let Some(loaded) = &self.loaded else { return };
-        if !self.dirty { return; }
+        if !self.dirty {
+            return;
+        }
 
         let mut preview_params = self.params;
         if self.open_tool == Some(Tool::Crop) {
@@ -694,12 +698,17 @@ impl EmulsionApp {
                 tex.set(image, egui::TextureOptions::LINEAR);
             }
             None => {
-                let handle = ui.ctx().load_texture("emulsion-preview", image, egui::TextureOptions::LINEAR);
+                let handle =
+                    ui.ctx()
+                        .load_texture("emulsion-preview", image, egui::TextureOptions::LINEAR);
                 self.texture = Some(handle);
             }
         }
-        let (base_w, base_h) = (loaded.base_small.width as f32, loaded.base_small.height as f32);
-        let size_swapped = self.params.rotate_90 % 2 != 0;
+        let (base_w, base_h) = (
+            loaded.base_small.width as f32,
+            loaded.base_small.height as f32,
+        );
+        let size_swapped = !self.params.rotate_90.is_multiple_of(2);
 
         self.texture_size = Some(if size_swapped {
             vec2(base_h, base_w)
@@ -792,40 +801,55 @@ impl EmulsionApp {
         egui::Window::new("Export")
             .collapsible(false)
             .resizable(false)
+            .max_width(370.0)
+            .default_width(370.0)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("This photo").size(13.0))
-                                .min_size(vec2(110.0, 30.0)),
-                        )
-                        .clicked()
-                    {
-                        self.export_dialog = false;
-                        self.export();
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("All edited photos").size(13.0))
-                                .min_size(vec2(150.0, 30.0)),
-                        )
-                        .clicked()
-                    {
-                        self.export_dialog = false;
-                        self.export_all_edited();
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("Cancel").size(13.0).color(MUTED))
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::new(1.0, LINE))
-                                .min_size(vec2(80.0, 30.0)),
-                        )
-                        .clicked()
-                    {
-                        self.export_dialog = false;
-                    }
+                ui.vertical(|ui| {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("JPEG quality").size(12.5).color(DIM));
+                        ui.spacing_mut().slider_width = ui.available_width();
+                        ui.add(
+                            egui::Slider::new(&mut self.export_quality, 1..=100)
+                                .show_value(false)
+                                .integer()
+                                .step_by(1.0),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("This photo").size(13.0))
+                                    .min_size(vec2(110.0, 30.0)),
+                            )
+                            .clicked()
+                        {
+                            self.export_dialog = false;
+                            self.export();
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("All edited photos").size(13.0))
+                                    .min_size(vec2(150.0, 30.0)),
+                            )
+                            .clicked()
+                        {
+                            self.export_dialog = false;
+                            self.export_all_edited();
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Cancel").size(13.0).color(MUTED))
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(Stroke::new(1.0, LINE))
+                                    .min_size(vec2(80.0, 30.0)),
+                            )
+                            .clicked()
+                        {
+                            self.export_dialog = false;
+                        }
+                    });
                 });
             });
     }
@@ -859,7 +883,7 @@ impl EmulsionApp {
             .set_directory(&source)
             .add_filter("PNG", &["png"])
             .add_filter("JPEG", &["jpg"])
-            .set_file_name(format!("{}.png", stem))
+            .set_file_name(format!("{}.jpg", stem))
             .save_file();
         let Some(dest) = choice else {
             self.status = String::from("export cancelled");
@@ -868,22 +892,12 @@ impl EmulsionApp {
         let s = dest.to_string_lossy().into_owned();
         let lower = s.to_lowercase();
         let result = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
-            emulsion_core::export::save_jpeg(s.as_str(), &out, 92)
+            emulsion_core::export::save_jpeg(s.as_str(), &out, self.export_quality)
         } else {
             emulsion_core::export::save_png(s.as_str(), &out)
         };
         match result {
             Ok(()) => {
-                // Sidecar (.emulsion.json) writing is disabled for now.
-                // let sidecar = std::path::Path::new(&s)
-                //     .with_extension("emulsion.json")
-                //     .to_string_lossy()
-                //     .into_owned();
-                // self.status =
-                //     match emulsion_core::export::save_sidecar(&sidecar, &source, &self.params) {
-                //         Ok(()) => format!("exported {} + settings", s),
-                //         Err(e) => format!("exported {} (settings sidecar failed: {})", s, e.message()),
-                //     };
                 self.status = format!("exported {}", s);
                 self.show_toast(self.status.clone());
             }
@@ -2228,7 +2242,10 @@ impl EmulsionApp {
             return;
         }
         egui::Area::new(egui::Id::unique("emulsion_toast"))
-            .anchor(Align2::CENTER_BOTTOM, vec2(0.0 + (SIDEBAR_WIDTH / 2.0), -24.0))
+            .anchor(
+                Align2::CENTER_BOTTOM,
+                vec2(0.0 + (SIDEBAR_WIDTH / 2.0), -24.0),
+            )
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
                 egui::Frame::new()

@@ -1,4 +1,3 @@
-use image::ImageReader;
 use rayon::prelude::*;
 
 use crate::{
@@ -55,10 +54,7 @@ fn decode_raw(path: &str) -> Result<LinearImage> {
 }
 
 fn decode_regular(path: &str) -> Result<LinearImage> {
-    let dimage = ImageReader::open(path)
-        .map_err(|e| CoreError::Io(format!("read: {}", e)))?
-        .decode()
-        .map_err(|e| CoreError::Io(format!("decode: {}", e)))?;
+    let dimage = image::open(path).map_err(|e| CoreError::Io(format!("read: {}", e)))?;
     let rgba = dimage.into_rgba8();
     let dim = rgba.dimensions();
     let width = dim.0 as usize;

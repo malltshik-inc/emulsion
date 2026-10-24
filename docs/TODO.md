@@ -38,7 +38,7 @@ and toggling back reproduces the exact same positive; an ordinary positive scan
 ## 2. DONE: Develop baseline
 
 The negative→positive conversion now adds a fixed baseline on top of the sliders
-(exposure +1.4 EV, WB temperature +80, contrast +82, saturation +20) so a neutral
+(exposure +1.4 EV, WB temperature +70, contrast +40, saturation +20) so a neutral
 scan converts to a usable positive on the first Develop click instead of a dark,
 pale one. Chosen over a visible preset (which would set the slider values when
 Develop is enabled) because the sliders then stay at 0 = baseline and the
@@ -47,7 +47,7 @@ positive (non-inverted) path is untouched. Covered by
 
 **Still open:** auto exposure from the inverted luma distribution for very
 thin/under-exposed negatives (the baseline is fixed, not adaptive), and a
-suggested WB beyond the fixed +80.
+suggested WB beyond the fixed +70.
 
 **Reference:** a Gemini post-mortem the owner supplied emphasises film-base /
 percentile normalization (we already do this in `robust_bounds`), logarithmic

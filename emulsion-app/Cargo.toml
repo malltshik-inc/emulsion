@@ -7,7 +7,7 @@ edition = "2024"
 emulsion-core = { path = "../emulsion-core" }
 eframe = "0.37.0"
 egui = "0.37.0"
-image = "0.25.10"
+image = "0.24"
 rfd = "0.17.2"
 
 [target."cfg(windows)".build-dependencies]

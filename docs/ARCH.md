@@ -140,7 +140,7 @@ source
 ```
 
 The **negative → positive conversion has a built-in baseline** (EV +1.4,
-WB temperature +80, contrast +82, saturation +20; constants in `tonemap.rs`).
+WB temperature +70, contrast +40, saturation +20; constants in `tonemap.rs`).
 Without it the conversion is too dark and too pale. The baseline is added on top
 of the slider values in the invert path only, so the sliders stay offsets
 (0 = baseline) and the positive path is untouched. `develop_defaults_apply_conversion_baseline`
@@ -197,7 +197,7 @@ values before the gamma encode lifts the midtones and flattens the print — the
 inverts the sRGB-encoded negative (`1 − encode(t)`) and applies WB/exposure to
 the decoded positive afterwards. This keeps blacks black and gives the sliders
 positive semantics (+EV brightens, +temperature warms). A fixed conversion
-baseline (EV +1.4, WB +80, contrast +82, saturation +20) is added on top of the
+baseline (EV +1.4, WB +70, contrast +40, saturation +20) is added on top of the
 sliders so the default conversion is usable instead of dark and pale. It is still
 a plain per-channel inversion: a film toe/shoulder curve and saturation recovery
 are not implemented yet (see TODO).
