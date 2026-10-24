@@ -147,10 +147,8 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     }
     apply_black_point(&mut working, &params.black_point);
 
-    let mut img = match params.crop {
-        Some(crop) => crop_image(&working, crop.x, crop.y, crop.width, crop.height),
-        None => working,
-    };
+    let mut img = working;
+
     if params.rotate_90 != 0 {
         img = rotate_90(&img, params.rotate_90);
     }
@@ -159,6 +157,9 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     }
     if params.flip_horizontal {
         img = flip_horizontal(&img);
+    }
+    if let Some(crop) = params.crop {
+        img = crop_image(&img, crop.x, crop.y, crop.width, crop.height);
     }
 
     let film = params.film.and_then(|id| film::lut(id).ok());

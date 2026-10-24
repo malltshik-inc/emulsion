@@ -58,6 +58,7 @@ struct ThumbData {
 
 struct Loaded {
     base_small: emulsion_core::image::LinearImage,
+    base_draft: emulsion_core::image::LinearImage,
     source_size: (usize, usize),
 }
 
@@ -174,26 +175,18 @@ impl Tool {
         }
     }
 
-    fn value_mut(self, params: &mut PipelineParams) -> &mut f32 {
+    fn value_mut(self, params: &mut PipelineParams) -> Option<&mut f32> {
         match self {
-            Self::Wb => &mut params.wb_temperature,
-            Self::Tint => &mut params.wb_tint,
-            Self::Ev => &mut params.exposure,
-            Self::Contrast => &mut params.contrast,
-            Self::Saturation => &mut params.saturation,
-            Self::Shadows => &mut params.shadows,
-            Self::Highlights => &mut params.highlights,
-            Self::Vignette => &mut params.vignette,
-            Self::Rotate => &mut params.fine_angle,
-            Self::Crop | Self::Develop | Self::Simulations => {
-                // Crop, Develop and Simulations have no single f32 value; not called for them.
-                fn get_dummy() -> &'static mut f32 {
-                    static mut DUMMY: f32 = 0.0;
-                    let ptr: *mut f32 = &raw mut DUMMY;
-                    unsafe { &mut *ptr }
-                }
-                get_dummy()
-            }
+            Self::Wb => Some(&mut params.wb_temperature),
+            Self::Tint => Some(&mut params.wb_tint),
+            Self::Ev => Some(&mut params.exposure),
+            Self::Contrast => Some(&mut params.contrast),
+            Self::Saturation => Some(&mut params.saturation),
+            Self::Shadows => Some(&mut params.shadows),
+            Self::Highlights => Some(&mut params.highlights),
+            Self::Vignette => Some(&mut params.vignette),
+            Self::Rotate => Some(&mut params.fine_angle),
+            Self::Crop | Self::Develop | Self::Simulations => None,
         }
     }
 
@@ -207,7 +200,9 @@ impl Tool {
             Self::Crop => params.crop.is_some(),
             _ => {
                 let mut copy = *params;
-                *self.value_mut(&mut copy) != 0.0
+                self.value_mut(&mut copy).is_some_and(|t| {
+                    *t != 0.0
+                })
             }
         }
     }
@@ -512,9 +507,11 @@ impl EmulsionApp {
                 }
             };
             let source_size = (base.width, base.height);
-            let base_small = emulsion_core::geometry::downscale(&base, 1800);
+            let base_small = emulsion_core::geometry::downscale(&base, 2000);
+            let base_draft = emulsion_core::geometry::downscale(&base, 1000);
             let _ = sender.send(Ok(Loaded {
                 base_small,
+                base_draft,
                 source_size,
             }));
         });
@@ -665,19 +662,31 @@ impl EmulsionApp {
 
     fn sync_texture(&mut self, ui: &mut egui::Ui) {
         let Some(loaded) = &self.loaded else { return };
-        if !self.dirty {
-            return;
-        }
-        // While cropping, show the full frame so a region can be drawn; once the
-        // crop is applied (leaving Crop), the preview shows only the cropped result.
+        if !self.dirty { return; }
+
         let mut preview_params = self.params;
         if self.open_tool == Some(Tool::Crop) {
             preview_params.crop = None;
         }
-        let out = develop(&loaded.base_small, &preview_params);
+
+        // If the user is currently holding down the mouse (dragging a slider/control),
+        // use the ultra-fast draft image. Otherwise, use the crisp base_small image.
+        let is_dragging = ui.input(|i| i.pointer.any_down());
+        let source_img = if is_dragging {
+            &loaded.base_draft
+        } else {
+            &loaded.base_small
+        };
+
+        let out = develop(source_img, &preview_params);
         let w = out.width as u32;
         let h = out.height as u32;
-        self.histogram = make_histogram(&out.data);
+
+        // Only update the heavy histogram on mouse release to save extra CPU cycles during drag
+        if !is_dragging {
+            self.histogram = make_histogram(&out.data);
+        }
+
         let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &out.data);
 
         match &mut self.texture {
@@ -685,15 +694,27 @@ impl EmulsionApp {
                 tex.set(image, egui::TextureOptions::LINEAR);
             }
             None => {
-                let handle =
-                    ui.ctx()
-                        .load_texture("emulsion-preview", image, egui::TextureOptions::LINEAR);
+                let handle = ui.ctx().load_texture("emulsion-preview", image, egui::TextureOptions::LINEAR);
                 self.texture = Some(handle);
             }
         }
-        self.texture_size = Some(vec2(w as f32, h as f32));
-        self.dirty = false;
-        self.thumbs_dirty = true;
+        let (base_w, base_h) = (loaded.base_small.width as f32, loaded.base_small.height as f32);
+        let size_swapped = self.params.rotate_90 % 2 != 0;
+
+        self.texture_size = Some(if size_swapped {
+            vec2(base_h, base_w)
+        } else {
+            vec2(base_w, base_h)
+        });
+
+        // If we were dragging, keep self.dirty = true so that the moment the user
+        // lets go of the mouse, it immediately triggers one final high-res render!
+        if is_dragging {
+            ui.ctx().request_repaint();
+        } else {
+            self.dirty = false;
+            self.thumbs_dirty = true;
+        }
     }
 
     fn current_size(&self) -> Option<(usize, usize)> {
@@ -773,8 +794,6 @@ impl EmulsionApp {
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ui.ctx(), |ui| {
-                // ui.label(RichText::new("What should be exported?").color(TEXT));
-                // ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -1416,7 +1435,7 @@ impl EmulsionApp {
                                 Tool::Crop => {}
                                 _ => {
                                     // Standard slider + dragvalue + reset for other tools
-                                    let value = tool.value_mut(&mut params);
+                                    let value = tool.value_mut(&mut params).ok_or(0.0).unwrap();
                                     ui.spacing_mut().slider_width = ui.available_width() - 99.0;
                                     let response = ui.add(
                                         egui::Slider::new(value, tool.range())
@@ -1935,8 +1954,6 @@ impl EmulsionApp {
                         };
                         self.crop_rect = Some(crop);
                         self.crop_drag_rect = Some(crop);
-                        self.params.crop = Some(crop);
-                        self.dirty = true;
                     }
                 } else {
                     let start_rect = self.crop_drag_rect.unwrap_or(CropRect {
@@ -1960,10 +1977,12 @@ impl EmulsionApp {
                         free_resize(self.crop_drag, start_rect, nd)
                     };
                     self.crop_rect = Some(crop);
-                    self.params.crop = Some(crop);
-                    self.dirty = true;
                 }
             } else {
+                if let Some(cr) = self.crop_rect {
+                    self.params.crop = Some(cr);
+                    self.dirty = true;
+                }
                 self.crop_drag = CropDrag::None;
                 self.crop_drag_start = None;
                 self.crop_drag_rect = None;
@@ -2209,7 +2228,7 @@ impl EmulsionApp {
             return;
         }
         egui::Area::new(egui::Id::unique("emulsion_toast"))
-            .anchor(Align2::CENTER_BOTTOM, vec2(0.0, -24.0))
+            .anchor(Align2::CENTER_BOTTOM, vec2(0.0 + (SIDEBAR_WIDTH / 2.0), -24.0))
             .order(egui::Order::Foreground)
             .show(ui.ctx(), |ui| {
                 egui::Frame::new()

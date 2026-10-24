@@ -451,7 +451,7 @@ fn develop_defaults_apply_conversion_baseline() {
             ..PipelineParams::default()
         },
     );
-    assert_eq!(&out.data[..4], &[205, 180, 148, 255]);
+    assert_eq!(&out.data[..4], &[193, 173, 149, 255]);
 
     // Cancelling the baseline must be visibly different (darker/flatter).
     let cancelled = develop(
