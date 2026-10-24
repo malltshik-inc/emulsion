@@ -9,7 +9,7 @@ Windows, Mac and Linux.
 [Latest release](https://github.com/malltshik-inc/emulsion/releases/latest)
 
 > **UNSIGNED**  
-> Both Mac and Windows builds are not signed, so you might see security or might not be able to run app. 
+> Both Mac and Windows builds are not signed, so you might see security warning or might not be able to run app. 
 
 > Workaround for Mac:
 > - Copy app from .dmg to your Applications
