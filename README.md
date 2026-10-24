@@ -1,3 +1,5 @@
+> 99.9% AI GENERATED 
+
 ![alt text](https://raw.githubusercontent.com/malltshik-inc/emulsion/refs/heads/main/emulsion-app/assets/screenshots/app.png)
 ---
 Desktop photo editor that converts negative film scans into positive images.
