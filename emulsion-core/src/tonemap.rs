@@ -21,8 +21,8 @@ const SRGB_GAMMA: f32 = 2.4;
 // (a slider at 0 means "baseline", not "none"), so the positive path and the
 // per-image patches are unchanged.
 const CONVERSION_BASELINE_EV: f32 = 1.4;
-const CONVERSION_BASELINE_WB: f32 = 80.0;
-const CONVERSION_BASELINE_CONTRAST: f32 = 82.0;
+const CONVERSION_BASELINE_WB: f32 = 70.0;
+const CONVERSION_BASELINE_CONTRAST: f32 = 40.0;
 const CONVERSION_BASELINE_SATURATION: f32 = 20.0;
 
 fn srgb_encode(v: f32) -> f32 {
