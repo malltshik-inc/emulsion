@@ -1,5 +1,5 @@
-# Emulsion
-
+![alt text](https://raw.githubusercontent.com/malltshik-inc/emulsion/refs/heads/main/emulsion-app/assets/screenshots/app.png)
+---
 Desktop photo editor that converts negative film scans into positive images.
 Simple UI, precise color, with a bundled strip of film simulations.
 Windows, macOS and Linux.
