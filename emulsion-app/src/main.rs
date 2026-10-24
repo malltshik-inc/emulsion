@@ -2420,6 +2420,20 @@ fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     Some(ctx.load_texture("emulsion-logo", color, egui::TextureOptions::LINEAR))
 }
 
+fn window_icon() -> egui::IconData {
+    match image::load_from_memory(include_bytes!("../assets/icons/icon-256.png")) {
+        Ok(image) => {
+            let image = image.to_rgba8();
+            egui::IconData {
+                rgba: image.as_raw().clone(),
+                width: image.width(),
+                height: image.height(),
+            }
+        }
+        Err(_) => egui::IconData::default(),
+    }
+}
+
 fn file_name(path: &str) -> String {
     match std::path::Path::new(path).file_name() {
         Some(name) => name.to_string_lossy().into_owned(),
@@ -3099,7 +3113,8 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([1000.0, 680.0]),
+            .with_min_inner_size([1000.0, 680.0])
+            .with_icon(window_icon()),
         ..Default::default()
     };
     let _ = eframe::run_native(

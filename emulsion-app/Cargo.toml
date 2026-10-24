@@ -10,6 +10,9 @@ egui = "0.37.0"
 image = "0.25.10"
 rfd = "0.17.2"
 
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.34"
+
 [package.metadata.packager]
 before-packaging-command = "cargo build --release -p emulsion-app"
 product-name = "Emulsion"

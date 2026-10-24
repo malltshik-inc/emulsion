@@ -62,6 +62,18 @@ Fonts are **bundled** (Ubuntu Regular/Medium + Ubuntu Mono, UFL, under
 platform. App icons live in `emulsion-app/assets/icons/`; `[package.metadata.packager]`
 in `emulsion-app/Cargo.toml` plus `.github/workflows/release.yml` build
 `.exe`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
+`icon.ico` embeds 16/24/32/48/64/128/256 px (PNG for 256, BMP for the rest) and
+`icon.icns` embeds 16–1024 px PNG chunks; `logo.png` (the top-bar mark, 128 px) is
+branding too. All are downscaled from a 1024 px square master.
+
+On Windows the icon must be embedded in **two** places, or the app looks
+unbranded even when the installer succeeds: `emulsion-app/build.rs` uses
+`winresource` (a `cfg(windows)` build-dependency) to put `assets/icons/icon.ico`
+into the exe's resources — this is what Explorer and the Start-menu shortcut
+show — and `main()` calls `ViewportBuilder::with_icon(window_icon())` to set the
+runtime window/taskbar icon. `cargo-packager`'s `icons` list alone only brands
+the installer and its shortcuts, **not** the binary's own icon (the pre-fix exe
+had no `RT_GROUP_ICON` resource), and it does not affect the live window icon.
 
 ### emulsion-app (`emulsion-app/src/main.rs`)
 
