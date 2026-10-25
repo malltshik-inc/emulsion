@@ -6,30 +6,8 @@ use crate::{
     geometry::{crop as crop_image, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
+    transfer,
 };
-
-// Standard sRGB transfer function (linear-light in [0,1] -> encoded [0,1]).
-const SRGB_CROSSOVER: f32 = 0.00304;
-const LINEAR_GAIN: f32 = 12.92;
-const SRGB_GAIN: f32 = 1.055;
-const SRGB_OFFSET: f32 = 0.055;
-const SRGB_GAMMA: f32 = 2.4;
-
-fn srgb_encode(v: f32) -> f32 {
-    if v <= SRGB_CROSSOVER {
-        v * LINEAR_GAIN
-    } else {
-        v.powf(1.0 / SRGB_GAMMA) * SRGB_GAIN - SRGB_OFFSET
-    }
-}
-
-fn srgb_decode(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v * LINEAR_GAIN.recip()
-    } else {
-        ((v + SRGB_OFFSET) / SRGB_GAIN).powf(SRGB_GAMMA)
-    }
-}
 
 /// Contrast, shadows/highlights and saturation, applied to sRGB-encoded values.
 ///
@@ -92,15 +70,16 @@ fn tonemap_and_quantize_look(
     out: &mut RgbaImage,
 ) {
     let src = &img.data;
+    let encode = transfer::encode_table();
     out.data
         .par_chunks_exact_mut(4)
         .enumerate()
         .for_each(|(i, rgba)| {
             let pix = i * 3;
             let encoded = [
-                srgb_encode(src[pix].clamp(0.0, 1.0)),
-                srgb_encode(src[pix + 1].clamp(0.0, 1.0)),
-                srgb_encode(src[pix + 2].clamp(0.0, 1.0)),
+                encode[transfer::encode_index(src[pix])],
+                encode[transfer::encode_index(src[pix + 1])],
+                encode[transfer::encode_index(src[pix + 2])],
             ];
             let mut rgb = apply_look(encoded, contrast, saturation, shadows, highlights);
             if let Some(lut) = film {
@@ -199,6 +178,8 @@ fn invert_negative(
     let contrast = params.contrast + params.invert_sensitivity * 0.2;
     let saturation = params.saturation + params.invert_sensitivity * 0.1;
     let src = &img.data;
+    let encode = transfer::encode_table();
+    let decode = transfer::decode_table();
     out.data
         .par_chunks_exact_mut(4)
         .enumerate()
@@ -206,10 +187,11 @@ fn invert_negative(
             let pix = i * 3;
             let mut encoded = [0.0_f32; 3];
             for (c, value) in encoded.iter_mut().enumerate() {
-                let neg = srgb_encode(src[pix + c].clamp(0.0, 1.0));
+                let neg = encode[transfer::encode_index(src[pix + c])];
                 let pos = 1.0 - neg;
-                let lin = (srgb_decode(pos) * gains[c] * exposure).clamp(0.0, 1.0);
-                *value = srgb_encode(lin);
+                let lin =
+                    (decode[transfer::decode_index(pos)] * gains[c] * exposure).clamp(0.0, 1.0);
+                *value = encode[transfer::encode_index(lin)];
             }
             let mut rgb = apply_look(
                 encoded,

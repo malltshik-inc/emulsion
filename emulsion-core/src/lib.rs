@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod image;
 pub mod params;
 pub mod tonemap;
+mod transfer;
 
 use error::Result;
 use image::RgbaImage;

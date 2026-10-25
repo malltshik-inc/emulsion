@@ -38,11 +38,11 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 ## 4. Perf — core
 
 - [ ] `develop` / invert path: reuse a buffer instead of cloning the whole f32 base per call
-- [ ] `invert_negative`: replace per-pixel `powf` with an sRGB LUT
+- [x] `invert_negative`: replace per-pixel `powf` with an sRGB LUT (shared `transfer` module)
 - [ ] `demosaic_bilinear`: precompute per-phase neighbor masks, drop the per-pixel `color_at`
 - [ ] `apply_black_point`: hoist per-channel constants out of the loop
 - [ ] `film::lut`: keep the lock across decode (no duplicate concurrent decodes)
-- [ ] share `srgb_encode`/`srgb_decode` + the RGBA→linear loop between `decode.rs` and `tonemap.rs`
+- [x] share `srgb_encode`/`srgb_decode` + the RGBA→linear loop between `decode.rs` and `tonemap.rs` (`transfer.rs`)
 
 ## 5. Perf — app
 
