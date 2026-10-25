@@ -139,6 +139,9 @@ impl EmulsionApp {
     }
 
     pub(crate) fn select_file(&mut self, index: usize) {
+        if self.cursor == Some(index) && self.loaded.is_some() {
+            return;
+        }
         self.save_current();
         self.cursor = Some(index);
         self.params = self
