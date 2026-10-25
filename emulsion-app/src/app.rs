@@ -32,6 +32,7 @@ pub(crate) struct EmulsionApp {
     pub(crate) thumb_cancel: Option<Arc<AtomicBool>>,
     pub(crate) thumb_generation: u64,
     pub(crate) thumbs_pending: Vec<usize>,
+    pub(crate) thumb_queued: Vec<bool>,
 
     pub(crate) params: PipelineParams,
     pub(crate) settings: HashMap<String, PipelineParams>,
@@ -100,6 +101,7 @@ impl EmulsionApp {
             thumb_cancel: None,
             thumb_generation: 0,
             thumbs_pending: Vec::new(),
+            thumb_queued: Vec::new(),
             params: PipelineParams::default(),
             settings: HashMap::new(),
             preview_scratch: emulsion_core::image::LinearImage::new(0, 0),
@@ -173,7 +175,7 @@ impl EmulsionApp {
         } else if let Some(path) = self.files.get(index) {
             self.settings.insert(path.clone(), p);
         }
-        self.thumbs_pending.push(index);
+        self.enqueue_thumbnail(index);
         self.show_toast("Settings pasted");
     }
 

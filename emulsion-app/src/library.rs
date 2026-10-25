@@ -283,6 +283,9 @@ impl EmulsionApp {
         self.thumb_textures = vec![None; self.files.len()];
         self.thumb_sizes = vec![None; self.files.len()];
         self.thumb_params = vec![None; self.files.len()];
+        // A new folder invalidates any queued indices and the dedup flags.
+        self.thumbs_pending.clear();
+        self.thumb_queued = vec![false; self.files.len()];
         let visible = visible_indices(&self.tree, &self.expanded);
         self.start_thumbnail_worker(visible);
     }
@@ -310,7 +313,7 @@ impl EmulsionApp {
                             if data.index < self.thumb_bases.len() {
                                 self.thumb_bases[data.index] = Some(data.base);
                                 self.thumb_sizes[data.index] = Some(data.source_size);
-                                self.thumbs_pending.push(data.index);
+                                self.enqueue_thumbnail(data.index);
                             }
                         }
                         None => {
