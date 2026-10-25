@@ -145,10 +145,10 @@ source
           └ develop()            [interactive path, re-runs on every param edit]
               WB gains           temperature/tint → per-channel multiply (positive path only)
               black point ×3     (v - bp) / (1 - bp), clamped [0, 0.98]  (pre-invert: kills the orange mask)
-              crop               fractional rect  (params.crop)
               rotate 90°         u8 0..3 quarter turns
               fine angle         bilinear around center, white fill outside
               flip horizontal    left column <-> right column
+              crop               fractional rect  (params.crop) — applied last
               ─ encode to display values ─
               positive           exposure (2^EV linear), then sRGB gamma
               negative           sRGB-encode the negative, 1 − encoded, decode to
@@ -372,8 +372,8 @@ None of this is wired into the UI yet (see 8).
     (`maintain_aspect_ratio(false)`), so a mismatch stretches the image. The old
     derivation `base_w/base_h` (+ a manual `rotate_90` swap) ignored `params.crop`,
     so a narrow crop was stretched wide on the canvas while the exported file
-    stayed correct. Since `develop` already applies crop → rotate → fine-angle →
-    flip, `sync_texture` normalizes `out.width/height` to the downscaled base's
+    stayed correct. Since `develop` already applies rotate → fine angle → flip →
+    crop, `sync_texture` normalizes `out.width/height` to the downscaled base's
     longest edge — keeping `texture_size` *identical* between a draft (1600) and a
     crisp (2000) render, so the canvas geometry (fit/zoom) never jumps when a
     slider drag swaps resolutions. Pinned by
@@ -395,8 +395,9 @@ None of this is wired into the UI yet (see 8).
    a failed sidecar write is reported in the status line but does not invalidate
    the image.
 4. **`rotate_fine` extra**: fine angle is bilinear with **white fill** outside the
-   source — corners become white. Straighten-then-crop is the natural workflow and
-   crop is applied *before* rotation, so the UI should offer crop before fine angle.
+   source — corners become white. Crop is applied **after** rotation (the last
+   geometry op), so the white fill is cropped away: straighten-then-crop is the
+   built-in behaviour, no timed UI needed.
 5. **WB temperature/tint sliders** are a simplified gain model
    (`1 + 0.30·t`, `1 + 0.15·m` around neutral). They are a knob, not a colourimetric
    temperature; refining them toward a real Kelvin/CIE model is continuing work (Percept `PRODUCT.md`).
