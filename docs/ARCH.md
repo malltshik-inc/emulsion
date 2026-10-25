@@ -75,9 +75,30 @@ runtime window/taskbar icon. `cargo-packager`'s `icons` list alone only brands
 the installer and its shortcuts, **not** the binary's own icon (the pre-fix exe
 had no `RT_GROUP_ICON` resource), and it does not affect the live window icon.
 
-### emulsion-app (`emulsion-app/src/main.rs`)
+### emulsion-app (`emulsion-app/src/`)
 
-Single-file egui app (intentionally; split when it earns it — see Gotcha 9).
+The egui frontend is split by concern. `main.rs` only wires modules and starts
+`eframe`; state lives in `app.rs`, and each panel is an `impl EmulsionApp`
+method in its own `ui/` file.
+
+| module | responsibility |
+|---|---|
+| `main.rs` | crate attributes, module wiring, `eframe::run_native` |
+| `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste |
+| `theme.rs` | palette + layout constants, bundled fonts, egui style, logo/window icon |
+| `model.rs` | `Tool`, `CropAspect`, `Orientation`, `CropDrag`, decoded-image structs (`Loaded`, `ThumbData`) |
+| `library.rs` | folder scan, file selection + settings, background decode, thumbnail worker |
+| `preview.rs` | preview/thumbnail texture sync from `develop` |
+| `histogram.rs` | histogram computation + painting |
+| `export.rs` | export dialog, single/all-edited export |
+| `ui/top_bar.rs` | brand bar, file meta, Reset/Copy/Paste/Export buttons |
+| `ui/sidebar.rs` | library list, file rows, histogram/stats footer |
+| `ui/settings.rs` | tool search + tab strip, expanded slider/rotate/develop panel |
+| `ui/film.rs` | film simulation search, strip, lazily generated cards/previews |
+| `ui/stage.rs` | canvas paint, zoom/pan, loading state, background gradient |
+| `ui/crop.rs` | crop overlay, handles/drag math, aspect/orientation controls |
+| `ui/toast.rs` | transient status toast |
+| `util.rs` | path labels, aspect label, cover UV |
 
 State held by `EmulsionApp`:
 
@@ -306,10 +327,11 @@ None of this is wired into the UI yet (see 8).
 
 4. **egui closures move-capture `self`.** You cannot have two `.show(ui, |ui| …)`
    closures in one `fn ui` that each close over `&mut self` — the second capture
-   errors. Follow `docs/…/panels.rs` pattern: call methods that take `&mut self`
-   from inside a single closure, or destructure fields out of `self` first so each
-   closure captures only the field refs it needs. Multiple closures over disjoint
-   fields is fine; overlapping `&mut self` is not.
+   errors. Follow the existing split pattern: each panel is an `impl
+   EmulsionApp` method in `ui/<panel>.rs`; call methods that take `&mut self`
+   from inside a single closure, or destructure fields out of `self` first so
+   each closure captures only the field refs it needs. Multiple closures over
+   disjoint fields is fine; overlapping `&mut self` is not.
 5. **`dyn` is a keyword** in this stdlib (edition 2024). Any variable or
    name that used to be `dyn` must be renamed (we use `dimg` / `base`). The compiler
    suggests `` `r#dyn` `` but renaming is cleaner.
@@ -361,9 +383,10 @@ None of this is wired into the UI yet (see 8).
    - undo history (params stack)
    - patch-file autosave/restore and presets
    - persist last folder / last export settings (OS config JSON, per PRODUCT.md)
-9. **App is intentionally single-file.** It will be split into modules only when the
-   file list/canvas/tools each earn their own file (see `METHODS.md`: prefer the
-   smallest change; splitting is cosmetic until then).
+9. **App modules are split by concern.** `main.rs` is only entry wiring; state
+   lives in `app.rs` and panels live in `ui/`. Add new UI code to the matching
+   module rather than growing `app.rs` (see `METHODS.md`: prefer the smallest
+   change).
 10. **The auto black-point baseline is baked into the demosaic output**, so the
     R/G/B sliders start at 0 (0 = "auto baseline already applied"). Making the
     baseline *visible* as non-zero slider starts would require moving the per-channel

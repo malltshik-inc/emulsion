@@ -1,0 +1,216 @@
+//! Application state, constructor and eframe frame loop.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Receiver;
+use std::time::Instant;
+
+use eframe::egui;
+use egui::{FontFamily, Pos2, Vec2};
+use emulsion_core::params::{CropRect, PipelineParams};
+
+use crate::histogram::Histogram;
+use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool};
+use crate::theme::{install_fonts, install_style, load_logo};
+
+pub(crate) struct EmulsionApp {
+    pub(crate) folder: String,
+    pub(crate) files: Vec<String>,
+    pub(crate) cursor: Option<usize>,
+    pub(crate) loaded: Option<Loaded>,
+
+    pub(crate) load_rx: Option<Receiver<Result<Loaded, String>>>,
+    pub(crate) loading: bool,
+
+    pub(crate) thumb_bases: Vec<Option<emulsion_core::image::LinearImage>>,
+    pub(crate) thumb_textures: Vec<Option<egui::TextureHandle>>,
+    pub(crate) thumb_sizes: Vec<Option<(usize, usize)>>,
+    pub(crate) thumb_params: Vec<Option<PipelineParams>>,
+    pub(crate) thumb_rx: Option<Receiver<ThumbMessage>>,
+    pub(crate) thumb_cancel: Option<Arc<AtomicBool>>,
+    pub(crate) thumb_generation: u64,
+    pub(crate) thumbs_dirty: bool,
+
+    pub(crate) params: PipelineParams,
+    pub(crate) settings: HashMap<String, PipelineParams>,
+    pub(crate) texture: Option<egui::TextureHandle>,
+    pub(crate) texture_size: Option<Vec2>,
+    pub(crate) zoom: f32,
+    pub(crate) fit_zoom: f32,
+    pub(crate) last_stage: Vec2,
+    pub(crate) pan: Vec2,
+
+    pub(crate) open_tool: Option<Tool>,
+    pub(crate) tool_search: String,
+    pub(crate) focus_search: bool,
+    pub(crate) film_search: String,
+    pub(crate) film_focus_search: bool,
+    pub(crate) film_textures: HashMap<Option<u16>, egui::TextureHandle>,
+    pub(crate) film_preview_base: Option<emulsion_core::image::LinearImage>,
+    pub(crate) film_preview_params: Option<PipelineParams>,
+    pub(crate) film_preview_source: Option<usize>,
+    pub(crate) histogram: Option<Histogram>,
+
+    pub(crate) logo: Option<egui::TextureHandle>,
+    pub(crate) wordmark_family: FontFamily,
+    pub(crate) status: String,
+    pub(crate) toast: Option<(String, Instant)>,
+    pub(crate) dirty: bool,
+    pub(crate) clipboard: Option<PipelineParams>,
+    pub(crate) export_dialog: bool,
+
+    // JPEG export quality (1..=100), default high.
+    pub(crate) export_quality: u8,
+
+    // Crop state
+    pub(crate) crop_rect: Option<CropRect>, // live crop (mirrors params.crop)
+    pub(crate) crop_drag: CropDrag,         // current drag state
+    pub(crate) crop_drag_start: Option<Pos2>, // drag start position
+    pub(crate) crop_drag_rect: Option<CropRect>, // rect at drag start
+    pub(crate) crop_aspect: CropAspect,     // aspect-ratio constraint
+    pub(crate) crop_orientation: Orientation, // portrait / landscape
+    pub(crate) crop_pan: bool,              // current drag started outside the crop (pan)
+}
+
+impl EmulsionApp {
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let wordmark_family = install_fonts(&cc.egui_ctx);
+        install_style(&cc.egui_ctx);
+        let logo = load_logo(&cc.egui_ctx);
+        Self {
+            folder: String::new(),
+            files: Vec::new(),
+            cursor: None,
+            loaded: None,
+            load_rx: None,
+            loading: false,
+            thumb_bases: Vec::new(),
+            thumb_textures: Vec::new(),
+            thumb_sizes: Vec::new(),
+            thumb_params: Vec::new(),
+            thumb_rx: None,
+            thumb_cancel: None,
+            thumb_generation: 0,
+            thumbs_dirty: false,
+            params: PipelineParams::default(),
+            settings: HashMap::new(),
+            texture: None,
+            texture_size: None,
+            zoom: 0.0,
+            fit_zoom: 0.0,
+            last_stage: Vec2::ZERO,
+            pan: Vec2::ZERO,
+            open_tool: None,
+            tool_search: String::new(),
+            focus_search: false,
+            film_search: String::new(),
+            film_focus_search: false,
+            film_textures: HashMap::new(),
+            film_preview_base: None,
+            film_preview_params: None,
+            film_preview_source: None,
+            histogram: None,
+            logo,
+            wordmark_family,
+            status: String::from("Open a folder to start"),
+            toast: None,
+            dirty: true,
+            clipboard: None,
+            export_dialog: false,
+            export_quality: 92,
+            crop_rect: None,
+            crop_drag: CropDrag::None,
+            crop_drag_start: None,
+            crop_drag_rect: None,
+            crop_aspect: CropAspect::Free,
+            crop_orientation: Orientation::Landscape,
+            crop_pan: false,
+        }
+    }
+
+    pub(crate) fn reset_all(&mut self) {
+        self.params = PipelineParams::default();
+        self.dirty = true;
+        self.show_toast("Edits reset");
+    }
+
+    pub(crate) fn copy_settings(&mut self) {
+        self.clipboard = Some(self.params);
+        self.show_toast("Settings copied");
+    }
+
+    pub(crate) fn paste_settings(&mut self) {
+        if let Some(p) = self.clipboard {
+            self.params = p;
+            self.crop_rect = p.crop;
+            self.crop_drag = CropDrag::None;
+            self.crop_drag_start = None;
+            self.crop_drag_rect = None;
+            self.dirty = true;
+            self.thumbs_dirty = true;
+            self.show_toast("Settings pasted");
+        }
+    }
+}
+
+impl eframe::App for EmulsionApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.poll_load();
+        self.poll_thumbnails();
+        if self.thumb_rx.is_some() || self.load_rx.is_some() {
+            ui.ctx().request_repaint();
+        }
+        if self.dirty {
+            self.sync_texture(ui);
+        }
+        if self.thumbs_dirty {
+            self.sync_thumbnails(ui.ctx());
+        }
+
+        ui.style_mut().always_scroll_the_only_direction = true;
+
+        egui::Panel::top("top_panel")
+            .exact_size(crate::theme::TOPBAR_HEIGHT)
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::theme::SETTINGS_BG)
+                    .inner_margin(egui::Margin::symmetric(16, 0)),
+            )
+            .show(ui, |ui| self.top_bar(ui));
+
+        egui::Panel::left("file_panel")
+            .exact_size(crate::theme::SIDEBAR_WIDTH)
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::theme::PANEL)
+                    .inner_margin(egui::Margin::symmetric(13, 16)),
+            )
+            .show(ui, |ui| self.sidebar(ui));
+
+        let settings_height = match self.open_tool {
+            Some(Tool::Simulations) => crate::theme::SETTINGS_SIMULATIONS_HEIGHT,
+            Some(_) => crate::theme::SETTINGS_OPEN_HEIGHT,
+            None => crate::theme::SETTINGS_HEIGHT,
+        };
+        egui::Panel::top("settings_panel")
+            .exact_size(settings_height)
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::theme::SETTINGS_BG)
+                    .inner_margin(egui::Margin::symmetric(16, 11)),
+            )
+            .show(ui, |ui| self.settings_panel(ui));
+
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(crate::theme::STAGE_OUT)
+                    .inner_margin(egui::Margin::ZERO),
+            )
+            .show(ui, |ui| self.stage(ui));
+
+        self.paint_toast(ui);
+        self.export_modal(ui);
+    }
+}

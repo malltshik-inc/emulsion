@@ -21,8 +21,8 @@ makes it **flatter**, +saturation makes it **less** chromatic, and +WB (warm)
 makes the negative **cooler**. Today all of these act on the negative as if it
 were a positive.
 
-**Where:** `emulsion-core/src/tonemap.rs` (`develop`), `emulsion-app/src/main.rs`
-(file selection / render call).
+**Where:** `emulsion-core/src/tonemap.rs` (`develop`),
+`emulsion-app/src/library.rs` (file selection) and `preview.rs` (render call).
 
 **Proposed approach:** separate "this source is a film negative" from "display
 it inverted". Track negative-ness per file when Develop is first enabled. For a
@@ -59,7 +59,7 @@ not adopted (pure-Rust constraint, crop is deferred).
 **State:** `EmulsionApp::settings` keys params by absolute path and restores them
 on selection. Closing the app loses all edits.
 
-**Where:** `emulsion-app/src/main.rs` (`select_file`, `settings`).
+**Where:** `emulsion-app/src/library.rs` (`select_file`, `settings`).
 
 **Acceptance:** reopening a folder restores each file's last settings (patch-file
 autosave, PRODUCT sec. 10), with a neutral fallback for files never edited.
@@ -74,7 +74,7 @@ double-click reset again.
 Shift+wheel = coarse) or with a genuine line-unit delta from
 `Event::MouseWheel`, not the point-scaled smooth delta.
 
-**Where:** `emulsion-app/src/main.rs` (`param_slider`).
+**Where:** `emulsion-app/src/ui/settings.rs` (the slider row in `tool_body`).
 
 **Acceptance:** wheel never moves a slider without the modifier; one notch with
 the modifier is a small, predictable change (<=0.5% of the range), and the canvas
