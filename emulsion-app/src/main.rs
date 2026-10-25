@@ -139,7 +139,7 @@ impl Tool {
         match self {
             Self::Ev => -3.0..=3.0,
             Self::Rotate => -5.0..=5.0,
-            Self::Crop | Self::Film | Self::Simulations => 0.0..=0.0, // use different UI
+            Self::Crop | Self::Simulations => 0.0..=0.0, // use different UI
             _ => -100.0..=100.0,
         }
     }
@@ -3141,6 +3141,43 @@ mod tests {
     }
 
     #[test]
+    fn every_slider_tool_has_a_movable_range() {
+        // Regression: the Film (Develop) slider was mapped to
+        // `invert_sensitivity` but kept the 0..=0 "no slider" range, so it
+        // rendered without a rail and could not be dragged.
+        let mut params = PipelineParams::default();
+        for tool in [
+            Tool::Film,
+            Tool::Simulations,
+            Tool::Wb,
+            Tool::Tint,
+            Tool::Ev,
+            Tool::Contrast,
+            Tool::Saturation,
+            Tool::Shadows,
+            Tool::Highlights,
+            Tool::Vignette,
+            Tool::Rotate,
+            Tool::Crop,
+        ] {
+            if tool.value_mut(&mut params).is_none() {
+                continue;
+            }
+            let range = tool.range();
+            assert!(
+                range.start() < range.end(),
+                "{} slider has an empty range",
+                tool.name()
+            );
+            assert!(
+                range.contains(&0.0),
+                "{} slider cannot reach its neutral value",
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
     fn film_panel_widgets_render_headless() {
         egui::__run_test_ui(|ui| {
             let mut base = emulsion_core::image::LinearImage::new(2, 2);
@@ -3168,5 +3205,87 @@ mod tests {
             let clicked = film_card(ui, None, "No simulation", None, true);
             assert!(!clicked);
         });
+    }
+    fn draw_slider(
+        ctx: &egui::Context,
+        value: &mut f32,
+        rect: &mut Rect,
+        range: &std::ops::RangeInclusive<f32>,
+        input: egui::RawInput,
+    ) {
+        ctx.run_ui(input, |ui| {
+            *rect = ui
+                .add(
+                    egui::Slider::new(value, range.clone())
+                        .show_value(false)
+                        .step_by(1.0),
+                )
+                .rect;
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn film_slider_drag_updates_invert_sensitivity() {
+        // Regression: the Film (Develop) panel's Output slider was wired to
+        // `invert_sensitivity` but kept the 0..=0 "no slider" range, so it had
+        // no rail and a drag left the value at 0.
+        let ctx = egui::Context::default();
+        let mut params = PipelineParams::default();
+        let range = Tool::Film.range();
+        let mut rect = Rect::NOTHING;
+        let value = Tool::Film.value_mut(&mut params).unwrap();
+
+        draw_slider(&ctx, value, &mut rect, &range, egui::RawInput::default());
+        draw_slider(&ctx, value, &mut rect, &range, egui::RawInput::default());
+        let start = rect.center();
+        let end = egui::pos2(rect.right() - 4.0, rect.center().y);
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Default::default(),
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![egui::Event::PointerMoved(end)],
+                ..Default::default()
+            },
+        );
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+        );
+
+        let moved = *value;
+        assert!(moved > 50.0, "film slider did not move: {moved}");
+        assert_eq!(params.invert_sensitivity, moved);
     }
 }
