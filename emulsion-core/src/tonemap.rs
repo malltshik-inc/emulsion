@@ -158,7 +158,7 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     let mut out = RgbaImage::new(img.width, img.height);
     if params.invert {
         let conversion_gains = wb_gains(params.wb_temperature, params.wb_tint);
-        let exposure_ev = params.exposure + params.invert_sensitivity * 0.014;
+        let exposure_ev = params.exposure + params.invert_sensitivity * 0.05;
         invert_negative(
             &img,
             &conversion_gains,
@@ -202,8 +202,8 @@ fn invert_negative(
     out: &mut RgbaImage,
 ) {
     let exposure = 2.0_f32.powf(exposure_ev);
-    let contrast = params.contrast + params.invert_sensitivity * 0.4;
-    let saturation = params.saturation + params.invert_sensitivity * 0.2;
+    let contrast = params.contrast + params.invert_sensitivity * 0.2;
+    let saturation = params.saturation + params.invert_sensitivity * 0.1;
     let src = &img.data;
     out.data
         .par_chunks_exact_mut(4)
