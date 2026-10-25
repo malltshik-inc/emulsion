@@ -8,14 +8,14 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 - [x] ARCH: drop the fixed negative→positive conversion baseline (EV +1.4, WB +70, contrast +40, saturation +20) and `develop_defaults_apply_conversion_baseline`; the Output (`invert_sensitivity`) slider replaced it
 - [x] ARCH: geometry order — the pipeline applies rotate_90 → fine angle → flip → crop (crop last)
 - [x] ARCH + PRODUCT: sidecar `<name>.emulsion.json` is a backlog feature, not written on export
-- [ ] AGENTS + ARCH: remove hard test counts (keep numbers out of docs)
-- [ ] ARCH: preview caps 2000/1600, not 1800
-- [ ] ARCH: drop `set_zoom_factor(1.2)` claim
-- [ ] ARCH: status line lives in the stage; no bottom-panel status
-- [ ] ARCH: drop `take_available_space()` gotcha (panel is fixed, not resizable)
-- [ ] ARCH: `logo.png` sits at `assets/` root, not `assets/icons/`
+- [x] ARCH: drop hard test counts (kept numbers out of AGENTS + ARCH)
+- [x] ARCH: preview caps 2000/1600, not 1800
+- [x] ARCH: drop `set_zoom_factor(1.2)` claim
+- [x] ARCH: status line lives in the stage; no bottom-panel status
+- [x] ARCH: `take_available_space()` gotcha reframed (fixed-width panel here)
+- [x] ARCH: `logo.png` sits at `assets/` root, not `assets/icons/`
 - [x] PRODUCT: move Undo to a backlog section (required mechanism, UI later)
-- [ ] Cosmetic stragglers: process() signature, CollapsingHeader mention, installer formats, export pre-fill `.jpg`, thumbnail fraction, "Open" button label, §4 preview-pane wording
+- [x] Cosmetic stragglers: process() signature, CollapsingHeader mention, installer formats, export pre-fill `.jpg`, thumbnail fraction, "Open" button label, §4 preview-pane wording
 
 ## 2. Dead code
 

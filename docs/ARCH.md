@@ -20,7 +20,7 @@ emulsion-app/    egui frontend — opens files, runs the pipeline, draws + expor
 Everything the product does is one pure function in `emulsion-core`:
 
 ```
-process(source_path, params: PipelineParams) -> RgbaImage
+process(source: &str, params: &PipelineParams) -> Result<RgbaImage>
 ```
 
 The app never mutates image state. The user edits a `PipelineParams` struct; the
@@ -38,7 +38,7 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 
 | module | responsibility |
 |---|---|
-| `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point; re-exports public types |
+| `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point |
 | `params.rs` | `PipelineParams` + `CropRect` — serde `Serialize/Deserialize`, `Default` impl |
 | `image.rs` | `RgbaImage` (RGBA8 interleaved `Vec<u8>`) and `LinearImage` (flat RGB interleaved `Vec<f32>`), both `(width, height, data)` |
 | `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `decode_thumbnail(path, max_edge)` sub-samples the Bayer grid *before* demosaic for a fast small preview; `is_supported(path)` is the shared extension filter |
@@ -59,12 +59,13 @@ RawTherapee level-12 collection; see `assets/film/ATTRIBUTION.md` (CC BY-SA 4.0)
 Fonts are **bundled** (Ubuntu Regular/Medium + Ubuntu Mono, UFL, under
 `emulsion-app/assets/fonts/`) and installed by `install_fonts` via
 `include_bytes!` — there are no OS font paths, so the UI is identical on every
-platform. App icons live in `emulsion-app/assets/icons/`; `[package.metadata.packager]`
-in `emulsion-app/Cargo.toml` plus `.github/workflows/release.yml` build
-`.exe`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
-`icon.ico` embeds 16/24/32/48/64/128/256 px (PNG for 256, BMP for the rest) and
-`icon.icns` embeds 16–1024 px PNG chunks; `logo.png` (the top-bar mark, 128 px) is
-branding too. All are downscaled from a 1024 px square master.
+platform. Branding: `assets/logo.png` (top-bar mark, 128 px) and
+`assets/icons/` (`icon-256.png`, `icon-512.png`, `icon.ico`, `icon.icns`).
+`[package.metadata.packager]` in `emulsion-app/Cargo.toml` plus
+`.github/workflows/release.yml` build `nsis`/`dmg`/`deb` installers on a `v*`
+tag, a published release, or manually. `icon.ico` embeds 16–256 px (BMP, 256
+PNG) and `icon.icns` embeds 16–1024 px PNG chunks, all downscaled from a
+1024 px square master.
 
 On Windows the icon must be embedded in **two** places, or the app looks
 unbranded even when the installer succeeds: `emulsion-app/build.rs` uses
@@ -106,7 +107,7 @@ State held by `EmulsionApp`:
 |---|---|
 | `folder`, `files`, `cursor` | the opened folder; `files` is the flat image list (DFS leaf order over the tree) that the cursor, settings and export index into |
 | `tree`, `expanded` | library tree (`TreeNode`: file leaf or folder with children) + the set of expanded folder paths (start empty, so folders begin closed) |
-| `loaded: Option<Loaded>` | preview base (`LinearImage`, downscaled to ≤1800 px longest edge) |
+| `loaded: Option<Loaded>` | preview bases: ≤2000 px crisp + ≤1600 px draft (`base_small`, `base_draft`) |
 | `load_rx` | mpsc `Receiver` for the background decode result |
 | `thumb_bases`, `thumb_textures` | per-file ≤96 px thumbnail base + its egui texture (one per row) |
 | `thumb_rx`, `thumb_cancel`, `thumb_generation` | background thumbnail worker channel + cancel flag + stale-result guard |
@@ -118,9 +119,6 @@ State held by `EmulsionApp`:
 | `zoom`, `pan` | canvas transform |
 | `status`, `dirty` | status line + re-render flag; `thumbs_dirty` rebuilds row thumbnails |
 
-`EmulsionApp::new` calls `ctx.set_zoom_factor(1.2)` — the size previously reached
-with two `Ctrl+=` presses — so fonts and widgets start ~20% larger.
-
 Workflow in `App::ui` each frame:
 1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
 2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
@@ -128,7 +126,7 @@ Workflow in `App::ui` each frame:
 4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
    central canvas); each panel calls its own method on `self` (keeps the egui
    closures single-capture).
-5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders the library tree (`render_tree` walks `self.tree`): folder rows are painted rows that toggle `self.expanded`, image rows are the 64 px thumbnail rows. Thumbnail decoding is on-demand — `refresh_thumbnails` on folder open decodes only the currently visible leaves, and a folder-expand/collapse frame runs `schedule_visible_thumbnails`, which cancels the old worker (generation bump) and decodes only the visible leaves whose base is still `None`. Scheduling is gated on a toggle actually happening that frame: scheduling every frame would cancel the worker before it finished a slow RAW. Collapsed folders' files are never decoded. Rows size their width to their content (name + indentation), so deep names widen the scroll area's content; `ScrollArea::both()` makes the overflow reachable with the horizontal scrollbar or Shift + wheel. No separate preview pane.
+5. Canvas: `allocate_painter` + `egui::Image::from_texture(texture).paint_at(ui, frame_rect)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders the library tree (`render_tree` walks `self.tree`): folder rows are painted rows that toggle `self.expanded`, image rows are the 64 px thumbnail rows. Thumbnail decoding is on-demand — `refresh_thumbnails` on folder open decodes only the currently visible leaves, and a folder-expand/collapse frame runs `schedule_visible_thumbnails`, which cancels the old worker (generation bump) and decodes only the visible leaves whose base is still `None`. Scheduling is gated on a toggle actually happening that frame: scheduling every frame would cancel the worker before it finished a slow RAW. Collapsed folders' files are never decoded. Rows size their width to their content (name + indentation), so deep names widen the scroll area's content; `ScrollArea::both()` makes the overflow reachable with the horizontal scrollbar or Shift + wheel. No separate preview pane.
 
 Selecting a row calls `select_file`: it stores the current `params` under the old
 path, then loads the new path's stored params (`PipelineParams::default()` if the
@@ -261,11 +259,8 @@ Confirmed widget/API surface (versions pinned in `emulsion-app/Cargo.toml`):
 ```
 Panel::top/left/right/bottom(id).exact_size/.default_size/.min_size.show(ui, |ui| …)  (no SidePanel/Side enum)
 CentralPanel::default().show(ui, |ui| …)   — added LAST
-Panel::bottom works too — used for the status line
+Panel::bottom works too (the sidebar histogram footer uses it)
 ScrollArea::both().show(ui, |ui| …)  → ScrollAreaOutput<R> with .inner: R
-ui.take_available_space()  — REQUIRED inside side panels to make them resizable
-CollapsingHeader::new("Title").default_open(true).open(Some(true)|None).show(ui, |ui| …)
-ui.collapsing("Title", |ui| …)  — starts collapsed
 ui.button("…").clicked(), ui.checkbox(&mut bool, "…").changed(), ui.heading(…), ui.label(…)
 Slider::new(&mut f32, -100.0..=100.0).changed()  — value is shown by default; `.text(…)` adds an inline label
 ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(80.0)  — let the rail fill the tools panel
@@ -275,7 +270,7 @@ ui.horizontal(|ui| …)  — row layout
 ColorImage::from_rgba_unmultiplied([w,h], &rgba) → ctx.load_texture(name, image, TextureOptions::LINEAR) → TextureHandle
 handle.set(image, opts)   — cheap re-upload; TextureHandle Clone is ref-counted (cheap)
 ui.allocate_painter(size, Sense::hover()/click()/click_and_drag()) → (response, painter)
-painter.image(tex.id(), rect, full_uv, Color32::WHITE)
+egui::Image::from_texture(tex).fit_to_exact_size(size).paint_at(ui, rect)
 painter.rect_filled(response.rect, 0.0, color); painter.text(pos, Align2::LEFT_TOP, s, FontId::proportional(13.0), Color32::WHITE)
 ui.input(|i| i.smooth_scroll_delta().y)             — wheel
 i.pointer.delta() with response.is_pointer_button_down_on() — pan only when the press started on the canvas
@@ -346,11 +341,11 @@ None of this is wired into the UI yet (see 8).
    `PathBuf -> String` via `into_string().unwrap()`.
 9. **Closures over `self.files[i]`** move the `String` out — always `let label = &self.files[i]`
    then `format!("{}", *label)`.
-10. **A side panel only resizes while its content consumes the available space.**
-    A `ScrollArea` or a `Separator`, or `ui.take_available_space()` at the top of the
-    panel's closure, is what makes the resize drag actually do anything. Without it the
-    cursor changes to the resize icon but the width stays put. Left/right panels do
-    call `take_available_space()` on purpose.
+10. **A resizable egui panel needs its content to consume the available space.**
+     A `ScrollArea`, a `Separator`, or `ui.take_available_space()` at the top of
+     the panel's closure is what makes the resize drag actually do anything.
+     Emulsion's side panel is fixed-width (`exact_size(SIDEBAR_WIDTH)`), so this
+     only matters if a future change makes it resizable.
 11. **`vec[i].get(j).is_none()` tests the *outer* `Option`.** `self.thumb_bases` is
     `Vec<Option<LinearImage>>`, so `.get(j)` is `Option<&Option<LinearImage>>` and
     `.is_none()` is `false` for every in-bounds index whether or not the base is
@@ -441,7 +436,7 @@ None of this is wired into the UI yet (see 8).
     out of view or inside a collapsed folder; selection still holds.
 14. **Thumbnails use the fast `decode_thumbnail` path, not `decode`.** RAW thumbs
     sub-sample the Bayer grid (`thumbnail_stride`, `stride ≡ 1 (mod CFA period)`
-    so the phase survives) and demosaic only ~1/450th of a 64MP frame, instead of
+    so the phase survives) and demosaic only ~1/625th of a 64MP frame, instead of
     demosaicing the full frame + allocating a f32 base + box-downscaling. Regular
     images decode fully (already fast) then `image`'s `thumbnail`. The true source
     dimensions still come back in `ThumbnailImage.size` for the footer/crop

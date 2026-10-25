@@ -37,11 +37,11 @@ Mark II shooting high-res mode (≈64 MP ORF files).
 
 Three-zone window:
 
-- **File browser (left):** contains the *Open folder…* button, a preview of the
-  currently selected image, and a recursive list of all supported images in the
-  opened folder, arranged as a tree: a subfolder is a row that expands in place
-  (closed by default) to its images and its own subfolders. Each directory lists
-  its images by name first, then its subfolders by name. Clicking an image opens it.
+- **File browser (left):** contains the *Open folder* button and a recursive list
+  of all supported images in the opened folder, arranged as a tree: a subfolder is
+  a row that expands in place (closed by default) to its images and its own
+  subfolders. Each directory lists its images by name first, then its subfolders
+  by name. Clicking an image opens it.
 - **Canvas (center):** shows the current result, fit to the window by default.
   Zoom with the mouse wheel. Pan by dragging with the left button or middle button.
   Press **Space** to recenter the image.
@@ -58,9 +58,9 @@ Three-zone window:
 Supporting structure:
 
 - **Top bar:** `Export`.
-- **Status line** runs along the bottom edge of the canvas and always shows the
-  current state: number of images, which file is loading or loaded, and the outcome
-  of an export.
+- **Status line** runs along the bottom edge of the canvas and shows the current
+  state: number of images, which file is loading or loaded, and the outcome of an
+  export.
 
 ## 5. Opening files (MUST)
 
@@ -77,8 +77,8 @@ Supporting structure:
   folder reveals its images and subfolders (which expand the same way).
 - MUST let names that overrun the panel width be scrolled into view (horizontal
   scrollbar or Shift + wheel).
-- MUST be reachable via `Open folder…`, which lives inside the file browser panel
-  and uses the platform's native folder picker.
+- MUST be reachable via an *Open folder* button inside the file browser panel,
+  using the platform's native folder picker.
 - MUST show a small thumbnail per visible file in the list (decoded in the
   background; a placeholder until it is ready). Thumbnails of a collapsed folder
   are only decoded once that folder is expanded; collapsing never discards
@@ -206,7 +206,7 @@ exposed in the UI later (§13).
   and **PNG** (lossless, no quality control). Batch export always writes PNG.
 - MUST export at the source resolution (real pixels, not the preview scale).
 - Uses the native save dialog; the chosen folder/file name is user's. The dialog
-  pre-fills the **source file stem** (e.g. `P6030011.png` for `P6030011.ORF`).
+  pre-fills the **source file stem** (e.g. `P6030011.jpg` for `P6030011.ORF`).
 - MUST never touch the original file.
 - After a successful save, the status line states the result (success and path,
   or error). A `<name>.emulsion.json` sidecar write is a backlog item (§13); the
