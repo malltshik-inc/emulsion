@@ -46,7 +46,7 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 
 ## 5. Perf — app
 
-- [ ] sidebar rows: layout the galley once and paint it (no measure-then-remake, no extra `String`)
+- [x] sidebar rows: layout the galley once and paint it (no measure-then-remake, no extra `String`)
 - [x] `paint_stage_background`: cache the mesh/dots, rebuild only on resize
 - [x] `sync_thumbnails`: queue dirty rows instead of sweeping the whole list per thumbnail
 
