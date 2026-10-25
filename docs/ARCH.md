@@ -88,6 +88,7 @@ method in its own `ui/` file.
 | `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste (+ Ctrl/Cmd+C/V on the selected file) |
 | `theme.rs` | palette + layout constants, bundled fonts, egui style, logo/window icon |
 | `model.rs` | `Tool`, `CropAspect`, `Orientation`, `CropDrag`, decoded-image structs (`Loaded`, `ThumbData`) |
+| `crop_math.rs` | pure crop geometry: fractional<->screen mapping, drag/resize/draw math (unit-tested) |
 | `library.rs` | folder scan (tree), file selection + settings, background decode, on-demand thumbnail worker |
 | `preview.rs` | preview/thumbnail texture sync from `develop` |
 | `histogram.rs` | histogram computation + painting |
@@ -97,7 +98,7 @@ method in its own `ui/` file.
 | `ui/settings.rs` | tool search + tab strip, expanded slider/rotate/develop panel |
 | `ui/film.rs` | film simulation search, strip, lazily generated cards/previews |
 | `ui/stage.rs` | canvas paint, zoom/pan, loading state, background gradient |
-| `ui/crop.rs` | crop overlay, handles/drag math, aspect/orientation controls |
+| `ui/crop.rs` | crop overlay, handles + aspect/orientation controls (the drag math lives in `crop_math.rs`) |
 | `ui/toast.rs` | transient status toast |
 | `util.rs` | path labels, aspect label, cover UV |
 

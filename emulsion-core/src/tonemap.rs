@@ -60,13 +60,18 @@ fn write_rgba(rgb: [f32; 3], rgba: &mut [u8]) {
     rgba[3] = 255;
 }
 
-fn tonemap_and_quantize_look(
-    img: &LinearImage,
+/// Non-geometry tonemap settings for one render pass.
+struct Look {
     contrast: f32,
     saturation: f32,
     shadows: f32,
     highlights: f32,
     exposure_gain: f32,
+}
+
+fn tonemap_and_quantize_look(
+    img: &LinearImage,
+    look: &Look,
     film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
@@ -77,12 +82,19 @@ fn tonemap_and_quantize_look(
         .enumerate()
         .for_each(|(i, rgba)| {
             let pix = i * 3;
+            let g = look.exposure_gain;
             let encoded = [
-                encode[transfer::encode_index(src[pix] * exposure_gain)],
-                encode[transfer::encode_index(src[pix + 1] * exposure_gain)],
-                encode[transfer::encode_index(src[pix + 2] * exposure_gain)],
+                encode[transfer::encode_index(src[pix] * g)],
+                encode[transfer::encode_index(src[pix + 1] * g)],
+                encode[transfer::encode_index(src[pix + 2] * g)],
             ];
-            let mut rgb = apply_look(encoded, contrast, saturation, shadows, highlights);
+            let mut rgb = apply_look(
+                encoded,
+                look.contrast,
+                look.saturation,
+                look.shadows,
+                look.highlights,
+            );
             if let Some(lut) = film {
                 rgb = lut.sample(rgb);
             }
@@ -159,16 +171,14 @@ pub fn develop_into(
         let exposure_ev = params.exposure + params.invert_sensitivity * 0.05;
         invert_negative(img, &gains, exposure_ev, params, film.as_deref(), out);
     } else {
-        tonemap_and_quantize_look(
-            img,
-            params.contrast,
-            params.saturation,
-            params.shadows,
-            params.highlights,
-            2.0_f32.powf(params.exposure),
-            film.as_deref(),
-            out,
-        );
+        let look = Look {
+            contrast: params.contrast,
+            saturation: params.saturation,
+            shadows: params.shadows,
+            highlights: params.highlights,
+            exposure_gain: 2.0_f32.powf(params.exposure),
+        };
+        tonemap_and_quantize_look(img, &look, film.as_deref(), out);
     }
     if params.vignette != 0.0 {
         apply_vignette(out, params.vignette);

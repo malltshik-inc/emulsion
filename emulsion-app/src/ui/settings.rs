@@ -11,7 +11,7 @@ use emulsion_core::params::PipelineParams;
 use crate::app::EmulsionApp;
 use crate::model::{CropDrag, Orientation, Tool};
 use crate::theme::{ACCENT, ACCENT_LINE, ACCENT_SOFT, DIM, HOVER, LINE, MUTED, PANEL_TOP, TEXT};
-use crate::ui::crop::normalize_crop;
+use crate::crop_math::normalize_crop;
 
 impl EmulsionApp {
     pub(crate) fn settings_panel(&mut self, ui: &mut egui::Ui) {

@@ -1,32 +1,21 @@
 //! Crop overlay, handles, drag maths and aspect/orientation controls.
 
 use eframe::egui;
-use egui::{Align, Color32, Layout, Pos2, Rect, RichText, Stroke, StrokeKind, Vec2, pos2, vec2};
+use egui::{pos2, vec2, Align, Color32, Layout, Pos2, Rect, RichText, Stroke, StrokeKind};
 use emulsion_core::params::{CropRect, PipelineParams};
 
 use crate::app::EmulsionApp;
+use crate::crop_math;
 use crate::model::{CropAspect, CropDrag, Orientation};
 use crate::theme::DIM;
 
 impl EmulsionApp {
     pub(crate) fn crop_to_screen(&self, cr: CropRect, frame: Rect) -> Rect {
-        Rect::from_min_max(
-            pos2(
-                frame.left() + cr.x * frame.width(),
-                frame.top() + cr.y * frame.height(),
-            ),
-            pos2(
-                frame.left() + (cr.x + cr.width) * frame.width(),
-                frame.top() + (cr.y + cr.height) * frame.height(),
-            ),
-        )
+        crop_math::crop_to_screen(cr, frame)
     }
 
     pub(crate) fn crop_center_in_stage(&self, cr: CropRect, frame: Rect) -> Pos2 {
-        pos2(
-            frame.left() + (cr.x + cr.width * 0.5) * frame.width(),
-            frame.top() + (cr.y + cr.height * 0.5) * frame.height(),
-        )
+        crop_math::crop_center_in_stage(cr, frame)
     }
 
     pub(crate) fn handle_crop_interaction(
@@ -56,8 +45,8 @@ impl EmulsionApp {
                         let (ax, ay) = norm(drag_start);
                         let (mx, my) = norm(pos);
                         let crop = match ratio {
-                            Some(r) => ratio_draw((ax, ay), (mx, my), r),
-                            None => self.crop_from_drag(drag_start, pos, frame),
+                            Some(r) => crop_math::ratio_draw((ax, ay), (mx, my), r),
+                            None => crop_math::crop_from_drag(drag_start, pos, frame),
                         };
                         self.crop_rect = Some(crop);
                         self.crop_drag_rect = Some(crop);
@@ -79,9 +68,9 @@ impl EmulsionApp {
                         }
                     } else if let Some(r) = ratio {
                         let (mx, my) = norm(pos);
-                        ratio_resize(self.crop_drag, start_rect, (mx, my), r)
+                        crop_math::ratio_resize(self.crop_drag, start_rect, (mx, my), r)
                     } else {
-                        free_resize(self.crop_drag, start_rect, nd)
+                        crop_math::free_resize(self.crop_drag, start_rect, nd)
                     };
                     self.crop_rect = Some(crop);
                 }
@@ -130,21 +119,6 @@ impl EmulsionApp {
         self.crop_drag_start = Some(pos);
         self.crop_drag_rect = None;
         self.crop_rect = None;
-    }
-
-    fn crop_from_drag(&self, a: Pos2, b: Pos2, frame: Rect) -> CropRect {
-        let min = a.min(b);
-        let max = a.max(b);
-        let x = ((min.x - frame.left()) / frame.width()).clamp(0.0, 1.0);
-        let y = ((min.y - frame.top()) / frame.height()).clamp(0.0, 1.0);
-        let right = ((max.x - frame.left()) / frame.width()).clamp(0.0, 1.0);
-        let bottom = ((max.y - frame.top()) / frame.height()).clamp(0.0, 1.0);
-        CropRect {
-            x,
-            y,
-            width: (right - x).max(0.0),
-            height: (bottom - y).max(0.0),
-        }
     }
 
     /// Fractional width/height ratio (in normalized 0..1 crop space) for the
@@ -385,164 +359,5 @@ impl EmulsionApp {
                 });
             },
         );
-    }
-}
-
-pub(crate) fn normalize_crop(cr: CropRect) -> Option<CropRect> {
-    if cr.width < 0.02 || cr.height < 0.02 {
-        return None;
-    }
-    if cr.x <= 0.001 && cr.y <= 0.001 && cr.width >= 0.999 && cr.height >= 0.999 {
-        return None;
-    }
-    Some(cr)
-}
-
-fn free_resize(handle: CropDrag, start: CropRect, nd: Vec2) -> CropRect {
-    let mut crop = start;
-    match handle {
-        CropDrag::Rect => {
-            crop.x = (start.x + nd.x).clamp(0.0, 1.0 - start.width);
-            crop.y = (start.y + nd.y).clamp(0.0, 1.0 - start.height);
-        }
-        CropDrag::TL => {
-            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
-            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
-            crop.width = (start.width - nd.x).max(0.01);
-            crop.height = (start.height - nd.y).max(0.01);
-        }
-        CropDrag::TR => {
-            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
-            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
-            crop.height = (start.height - nd.y).max(0.01);
-        }
-        CropDrag::BL => {
-            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
-            crop.width = (start.width - nd.x).max(0.01);
-            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
-        }
-        CropDrag::BR => {
-            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
-            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
-        }
-        CropDrag::T => {
-            crop.y = (start.y + nd.y).clamp(0.0, start.y + start.height - 0.01);
-            crop.height = (start.height - nd.y).max(0.01);
-        }
-        CropDrag::B => {
-            crop.height = (start.height + nd.y).max(0.01).min(1.0 - start.y);
-        }
-        CropDrag::L => {
-            crop.x = (start.x + nd.x).clamp(0.0, start.x + start.width - 0.01);
-            crop.width = (start.width - nd.x).max(0.01);
-        }
-        CropDrag::R => {
-            crop.width = (start.width + nd.x).max(0.01).min(1.0 - start.x);
-        }
-        CropDrag::None | CropDrag::Draw => {}
-    }
-    crop
-}
-
-/// Resize a handle while keeping width/height = `r`, anchored so the opposite
-/// corner (or edge) stays put.
-fn ratio_resize(handle: CropDrag, start: CropRect, mouse: (f32, f32), r: f32) -> CropRect {
-    let (mx, my) = mouse;
-    let cx = start.x + start.width * 0.5;
-    let cy = start.y + start.height * 0.5;
-    let (x, y, mut w, mut h) = match handle {
-        CropDrag::BR => {
-            let w = (mx - start.x).max(0.0);
-            (start.x, start.y, w, w / r)
-        }
-        CropDrag::TL => {
-            let ax = start.x + start.width;
-            let ay = start.y + start.height;
-            let w = (ax - mx).max(0.0);
-            (ax - w, ay - w / r, w, w / r)
-        }
-        CropDrag::TR => {
-            let ax = start.x;
-            let ay = start.y + start.height;
-            let w = (mx - ax).max(0.0);
-            (ax, ay - w / r, w, w / r)
-        }
-        CropDrag::BL => {
-            let ax = start.x + start.width;
-            let ay = start.y;
-            let w = (ax - mx).max(0.0);
-            (ax - w, ay, w, w / r)
-        }
-        CropDrag::T => {
-            let ay = start.y + start.height;
-            let h = (ay - my).max(0.0);
-            (cx - h * r * 0.5, ay - h, h * r, h)
-        }
-        CropDrag::B => {
-            let ay = start.y;
-            let h = (my - ay).max(0.0);
-            (cx - h * r * 0.5, ay, h * r, h)
-        }
-        CropDrag::L => {
-            let ax = start.x + start.width;
-            let w = (ax - mx).max(0.0);
-            (ax - w, cy - w / r * 0.5, w, w / r)
-        }
-        CropDrag::R => {
-            let ax = start.x;
-            let w = (mx - ax).max(0.0);
-            (ax, cy - w / r * 0.5, w, w / r)
-        }
-        CropDrag::None | CropDrag::Rect | CropDrag::Draw => {
-            (start.x, start.y, start.width, start.height)
-        }
-    };
-    if w > 1.0 {
-        w = 1.0;
-        h = w / r;
-    }
-    if h > 1.0 {
-        h = 1.0;
-        w = h * r;
-    }
-    CropRect {
-        x: x.clamp(0.0, (1.0 - w).max(0.0)),
-        y: y.clamp(0.0, (1.0 - h).max(0.0)),
-        width: w,
-        height: h,
-    }
-}
-
-/// Draw a fresh rect from `anchor` toward `mouse`, keeping width/height = `r`
-/// and staying inside the unit square.
-fn ratio_draw(anchor: (f32, f32), mouse: (f32, f32), r: f32) -> CropRect {
-    let (ax, ay) = anchor;
-    let (mx, my) = mouse;
-    let sx = if mx < ax { -1.0 } else { 1.0 };
-    let sy = if my < ay { -1.0 } else { 1.0 };
-    let mut w = (mx - ax).abs();
-    let mut h = (my - ay).abs();
-    if w / r >= h {
-        h = w / r;
-    } else {
-        w = h * r;
-    }
-    let max_w = if sx > 0.0 { 1.0 - ax } else { ax };
-    let max_h = if sy > 0.0 { 1.0 - ay } else { ay };
-    if w > max_w {
-        w = max_w.max(0.0);
-        h = w / r;
-    }
-    if h > max_h {
-        h = max_h.max(0.0);
-        w = h * r;
-    }
-    let x = if sx > 0.0 { ax } else { ax - w };
-    let y = if sy > 0.0 { ay } else { ay - h };
-    CropRect {
-        x: x.clamp(0.0, 1.0),
-        y: y.clamp(0.0, 1.0),
-        width: w,
-        height: h,
     }
 }

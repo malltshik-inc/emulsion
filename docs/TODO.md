@@ -32,7 +32,7 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 - [x] core: `save_png`, `process()`, `decode` on a regular image, `CoreError::message`
 - [x] app: `histogram::make_histogram`
 - [x] app: `util::aspect_label`, `util::cover_uv`
-- [ ] app: crop drag math (extracted in item 6) — `free_resize`, `ratio_resize`, `ratio_draw`, `crop_from_drag`, `normalize_crop`
+- [x] app: crop drag math (extracted in item 6) — crop geometry tests
 - [x] app: sparse (not-yet-loaded) index handling in `sync_thumbnails` if touched
 
 ## 4. Perf — core
@@ -52,7 +52,7 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 
 ## 6. Structure — app
 
-- [ ] extract pure crop drag/resize math out of `ui/crop.rs` (+ tests)
+- [x] extract pure crop drag/resize math out of `ui/crop.rs` (+ tests → `crop_math.rs`)
 - [ ] dedupe ghost-reset / outline-button builders across settings/film/crop
 - [ ] dedupe MP computation; `library.rs` uses `util::file_extension`
 - [ ] dedupe "Open a folder to start" string

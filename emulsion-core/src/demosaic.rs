@@ -116,8 +116,7 @@ pub fn demosaic_bilinear(width: usize, height: usize, bayer: &[u16], cfa: &CFA) 
                     let n = counts[py * pw + px][c] as usize;
                     let mut sum = 0.0_f32;
                     let mut cnt = 0.0_f32;
-                    for k in 0..n {
-                        let (dx, dy) = offsets[base + c][k];
+                    for &(dx, dy) in &offsets[base + c][..n] {
                         let yy = y as i64 + dy as i64;
                         let xx = x as i64 + dx as i64;
                         if yy < 0 || yy >= height as i64 {
