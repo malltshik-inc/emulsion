@@ -35,6 +35,9 @@ pub(crate) struct EmulsionApp {
 
     pub(crate) params: PipelineParams,
     pub(crate) settings: HashMap<String, PipelineParams>,
+    // Reused develop buffers so a slider tick allocates nothing.
+    pub(crate) preview_scratch: emulsion_core::image::LinearImage,
+    pub(crate) preview_out: emulsion_core::image::RgbaImage,
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) texture_size: Option<Vec2>,
     pub(crate) zoom: f32,
@@ -97,6 +100,8 @@ impl EmulsionApp {
             thumbs_dirty: false,
             params: PipelineParams::default(),
             settings: HashMap::new(),
+            preview_scratch: emulsion_core::image::LinearImage::new(0, 0),
+            preview_out: emulsion_core::image::RgbaImage::new(0, 0),
             texture: None,
             texture_size: None,
             zoom: 0.0,

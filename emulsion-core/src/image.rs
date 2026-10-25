@@ -14,6 +14,13 @@ impl RgbaImage {
             data: vec![0_u8; width * height * 4],
         }
     }
+
+    /// Re-dimension in place, reusing the allocation when the capacity fits.
+    pub fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.data.resize(width * height * 4, 0);
+    }
 }
 
 /// Working image: one flat f32 buffer, RGB interleaved (stride = 3),
@@ -33,6 +40,13 @@ impl LinearImage {
             height,
             data: vec![0.0_f32; width * height * 3],
         }
+    }
+
+    /// Re-dimension in place, reusing the allocation when the capacity fits.
+    pub fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.data.resize(width * height * 3, 0.0);
     }
 
     pub fn pixel(&self, x: usize, y: usize) -> (f32, f32, f32) {

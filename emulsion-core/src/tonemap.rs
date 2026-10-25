@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 
 use crate::{
-    colorops::{apply_black_point, apply_exposure, apply_wb, wb_gains},
+    colorops::{apply_black_point, apply_wb, wb_gains},
     film::{self, HaldLut},
     geometry::{crop as crop_image, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
@@ -66,6 +66,7 @@ fn tonemap_and_quantize_look(
     saturation: f32,
     shadows: f32,
     highlights: f32,
+    exposure_gain: f32,
     film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
@@ -77,9 +78,9 @@ fn tonemap_and_quantize_look(
         .for_each(|(i, rgba)| {
             let pix = i * 3;
             let encoded = [
-                encode[transfer::encode_index(src[pix])],
-                encode[transfer::encode_index(src[pix + 1])],
-                encode[transfer::encode_index(src[pix + 2])],
+                encode[transfer::encode_index(src[pix] * exposure_gain)],
+                encode[transfer::encode_index(src[pix + 1] * exposure_gain)],
+                encode[transfer::encode_index(src[pix + 2] * exposure_gain)],
             ];
             let mut rgb = apply_look(encoded, contrast, saturation, shadows, highlights);
             if let Some(lut) = film {
@@ -91,71 +92,87 @@ fn tonemap_and_quantize_look(
 
 /// Full interactive path: apply the param sliders to a developed base and
 /// produce the display/export 8-bit image. Order is WB -> black point ->
-/// crop/rotate -> invert + exposure (cheap ops, re-run live).
+/// rotate/fine-angle/flip/crop -> invert + exposure (cheap ops, re-run live).
 ///
 /// Black point stays *before* inversion (PRODUCT.md §8: it removes the
 /// negative's orange mask). Exposure is applied *after* inversion so +EV
-/// brightens the displayed positive rather than darkening it.
-///
-/// When Develop (invert) is on, the `invert_sensitivity` slider simultaneously raises
-/// exposure, contrast and saturation on top of the per-slider values. The
-/// invert_sensitivity slider only affects the inverted path; positive (non-inverted)
-/// images are untouched by it.
+/// brightens the displayed positive rather than darkening it. When Develop
+/// (invert) is on, the Output (`invert_sensitivity`) slider raises exposure,
+/// contrast and saturation on the invert path only.
 pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
+    let mut work = LinearImage::new(base.width, base.height);
+    let mut out = RgbaImage::new(1, 1);
+    develop_into(base, params, &mut work, &mut out);
+    out
+}
+
+/// Like [`develop`] but reuses caller-owned buffers, so a live slider edit
+/// re-renders without allocating a fresh f32 working base (and output) per
+/// frame — the preview holds two persistent buffers and calls this.
+pub fn develop_into(
+    base: &LinearImage,
+    params: &PipelineParams,
+    work: &mut LinearImage,
+    out: &mut RgbaImage,
+) {
+    work.resize(base.width, base.height);
+    work.data.copy_from_slice(&base.data);
+
     let gains = wb_gains(params.wb_temperature, params.wb_tint);
-    let mut working = base.clone();
 
     // A converted negative is inverted below, so its WB gains are applied to
     // the *positive* instead (otherwise +temperature would cool the result).
     if !params.invert {
-        apply_wb(&mut working, &gains);
+        apply_wb(work, &gains);
     }
-    apply_black_point(&mut working, &params.black_point);
+    apply_black_point(work, &params.black_point);
 
-    let mut img = working;
-
-    if params.rotate_90 != 0 {
-        img = rotate_90(&img, params.rotate_90);
-    }
-    if params.fine_angle != 0.0 {
-        img = rotate_fine(&img, params.fine_angle);
-    }
-    if params.flip_horizontal {
-        img = flip_horizontal(&img);
-    }
-    if let Some(crop) = params.crop {
-        img = crop_image(&img, crop.x, crop.y, crop.width, crop.height);
-    }
+    let geometry = params.rotate_90 != 0
+        || params.fine_angle != 0.0
+        || params.flip_horizontal
+        || params.crop.is_some();
+    let mut owned;
+    let img: &LinearImage = if geometry {
+        owned = std::mem::replace(work, LinearImage::new(0, 0));
+        let mut img = owned;
+        if params.rotate_90 != 0 {
+            img = rotate_90(&img, params.rotate_90);
+        }
+        if params.fine_angle != 0.0 {
+            img = rotate_fine(&img, params.fine_angle);
+        }
+        if params.flip_horizontal {
+            img = flip_horizontal(&img);
+        }
+        if let Some(crop) = params.crop {
+            img = crop_image(&img, crop.x, crop.y, crop.width, crop.height);
+        }
+        owned = img;
+        &owned
+    } else {
+        &*work
+    };
 
     let film = params.film.and_then(|id| film::lut(id).ok());
-    let mut out = RgbaImage::new(img.width, img.height);
+    out.resize(img.width, img.height);
     if params.invert {
-        let conversion_gains = wb_gains(params.wb_temperature, params.wb_tint);
         let exposure_ev = params.exposure + params.invert_sensitivity * 0.05;
-        invert_negative(
-            &img,
-            &conversion_gains,
-            exposure_ev,
-            params,
-            film.as_deref(),
-            &mut out,
-        );
+        invert_negative(img, &gains, exposure_ev, params, film.as_deref(), out);
     } else {
-        apply_exposure(&mut img, params.exposure);
         tonemap_and_quantize_look(
-            &img,
+            img,
             params.contrast,
             params.saturation,
             params.shadows,
             params.highlights,
+            2.0_f32.powf(params.exposure),
             film.as_deref(),
-            &mut out,
+            out,
         );
     }
     if params.vignette != 0.0 {
-        apply_vignette(&mut out, params.vignette);
+        apply_vignette(out, params.vignette);
     }
-    out
 }
 
 /// Negative -> positive invert_sensitivity: invert in the sRGB-encoded (perceptual)

@@ -2,7 +2,7 @@
 
 use eframe::egui;
 use egui::vec2;
-use emulsion_core::tonemap::develop;
+use emulsion_core::tonemap::{develop, develop_into};
 
 use crate::app::EmulsionApp;
 use crate::histogram::make_histogram;
@@ -60,7 +60,14 @@ impl EmulsionApp {
             &loaded.base_small
         };
 
-        let out = develop(source_img, &preview_params);
+        // Develop into the persistent buffers — a slider tick allocates nothing.
+        develop_into(
+            source_img,
+            &preview_params,
+            &mut self.preview_scratch,
+            &mut self.preview_out,
+        );
+        let out = &self.preview_out;
         let w = out.width as u32;
         let h = out.height as u32;
 
