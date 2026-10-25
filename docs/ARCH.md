@@ -49,7 +49,7 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate/flip → invert+exposure → contrast/shadows/highlights/saturation → film LUT → vignette) |
 | `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params + film name) |
 | `error.rs` | `CoreError`, `Result<T>` = `std::result::Result<T, CoreError>` |
-| `tests.rs` | 37 unit tests, one per op (incl. robust-bounds, inversion, conversion baseline, Hald and sidecar tests) |
+| `tests.rs` | unit tests for every op — robust-bounds, inversion, Hald, sidecar, downscale, develop integration |
 
 `build.rs` scans `assets/film/{bw,color}/*.png` and emits `film_registry.rs`
 (`include_bytes!` per LUT), so adding a PNG is enough to make it appear in the UI.
@@ -152,22 +152,19 @@ source
               ─ encode to display values ─
               positive           exposure (2^EV linear), then sRGB gamma
               negative           sRGB-encode the negative, 1 − encoded, decode to
-                                 linear, ×(gains+WB baseline)×2^(EV+EV baseline), re-encode
-              contrast           smoothstep S-curve blended by (contrast+baseline)/100
+                                 linear, ×WB gains×2^EV, re-encode
+              contrast           smoothstep S-curve blended by (contrast+boost)/100
               shadows/highlights squared-weight lift/lower of the dark/bright ends
-              saturation         scale distance from Rec.709 luma by 1+(sat+baseline)/100
+              saturation         scale distance from Rec.709 luma by 1+(sat+boost)/100
               film LUT           trilinear sample of the selected Hald CLUT
               quantize           round → u8, alpha 255
               vignette           radial corner darken/brighten on the 8-bit result
 ```
 
-The **negative → positive conversion has a built-in baseline** (EV +1.4,
-WB temperature +70, contrast +40, saturation +20; constants in `tonemap.rs`).
-Without it the conversion is too dark and too pale. The baseline is added on top
-of the slider values in the invert path only, so the sliders stay offsets
-(0 = baseline) and the positive path is untouched. `develop_defaults_apply_conversion_baseline`
-pins this: a neutral invert must equal the tuned look, and cancelling the offsets
-must be visibly darker/flatter.
+The **Output slider** (`invert_sensitivity`) is the negative→positive "look"
+control: on the invert path it raises exposure (`+0.05·k` EV), contrast
+(`+0.2·k`) and saturation (`+0.1·k`) on top of the per-slider values, so the
+sliders stay offsets and the positive path is untouched.
 
 Film LUTs run last (RawTherapee convention) on sRGB-encoded values, in both the
 positive and inverted paths. The decoded cube is cached per id in a process-wide
@@ -218,11 +215,9 @@ values before the gamma encode lifts the midtones and flattens the print — the
 "pale and too bright" look, and why −EV alone only made it grey. `develop` now
 inverts the sRGB-encoded negative (`1 − encode(t)`) and applies WB/exposure to
 the decoded positive afterwards. This keeps blacks black and gives the sliders
-positive semantics (+EV brightens, +temperature warms). A fixed conversion
-baseline (EV +1.4, WB +70, contrast +40, saturation +20) is added on top of the
-sliders so the default conversion is usable instead of dark and pale. It is still
-a plain per-channel inversion: a film toe/shoulder curve and saturation recovery
-are not implemented yet (see TODO).
+positive semantics (+EV brightens, +temperature warms). It is still a plain
+per-channel inversion: a film toe/shoulder curve and saturation recovery
+are not implemented yet (see Limitations).
 
 ---
 
@@ -484,10 +479,8 @@ managed-runtime (Java/Kotlin) reviewer's perspective.
 
 ## 10. Verification
 
-- `cargo test` — 37 core unit tests (every op + serde roundtrip + sidecar JSON +
-  Hald identity/geometry + film registry + B&W desaturation + conversion baseline +
-  demosaic shape + downscale + develop-invert integration + post-invert
-  exposure/WB direction + contrast/saturation response).
+- `cargo test` — core and app unit suites pass; keep every op covered (the suite
+  grows with each op, no hard count).
 - `cargo fmt`, `cargo clippy` — both clean across the workspace.
 - Manual smoke: `cargo build --release && target\release\emulsion-app.exe` — open
   a folder with ORF/ARW files, click a file, drag sliders, `Export…`.
