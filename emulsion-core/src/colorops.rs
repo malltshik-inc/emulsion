@@ -33,21 +33,18 @@ pub fn apply_exposure(img: &mut LinearImage, ev: f32) {
 /// Apply per-channel black point (0.0..1.0 of the normalized range), in place.
 /// Subtracts and re-expands so whites keep their value.
 pub fn apply_black_point(img: &mut LinearImage, bp: &[f32; 3]) {
+    let mut p = [0.0_f32; 3];
+    let mut scale = [0.0_f32; 3];
+    for c in 0..3 {
+        let b = bp[c].clamp(0.0, 0.98);
+        p[c] = b;
+        scale[c] = if b > 0.0 { 1.0 / (1.0 - b) } else { 0.0 };
+    }
     img.data.par_chunks_exact_mut(3).for_each(|pix| {
         for c in 0..3 {
-            let b = bp[c].clamp(0.0, 0.98);
-            if b > 0.0 {
-                pix[c] = (pix[c] - b) / (1.0 - b);
+            if scale[c] > 0.0 {
+                pix[c] = (pix[c] - p[c]) * scale[c];
             }
         }
-    });
-}
-
-/// Invert (negative -> positive), in place.
-pub fn invert(img: &mut LinearImage) {
-    img.data.par_chunks_exact_mut(3).for_each(|pix| {
-        pix[0] = 1.0 - pix[0];
-        pix[1] = 1.0 - pix[1];
-        pix[2] = 1.0 - pix[2];
     });
 }

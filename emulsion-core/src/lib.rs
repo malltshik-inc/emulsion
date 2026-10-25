@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod image;
 pub mod params;
 pub mod tonemap;
+mod transfer;
 
 use error::Result;
 use image::RgbaImage;
@@ -22,7 +23,3 @@ pub fn process(source: &str, params: &PipelineParams) -> Result<RgbaImage> {
     let base = decode::decode(source)?;
     Ok(tonemap::develop(&base, params))
 }
-
-// Re-export the public data types at the crate root.
-pub use image::LinearImage;
-pub use params::CropRect;

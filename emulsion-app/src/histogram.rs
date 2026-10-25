@@ -88,3 +88,39 @@ pub(crate) fn paint_histogram(ui: &mut egui::Ui, histogram: Option<&Histogram>, 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::make_histogram;
+
+    #[test]
+    fn histogram_empty_is_none() {
+        assert!(make_histogram(&[]).is_none());
+    }
+
+    #[test]
+    fn histogram_all_black_peaks_bin_zero() {
+        let h = make_histogram(&[0, 0, 0, 255, 0, 0, 0, 255]).unwrap();
+        for channel in 0..3 {
+            assert!((h.channels[channel][0] - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn histogram_normalizes_peak_bin_to_one() {
+        let h = make_histogram(&[0, 0, 0, 255, 0, 0, 0, 255]).unwrap();
+        assert!((h.channels[0][0] - 1.0).abs() < 1e-6);
+        assert!((h.channels[1][0] - 1.0).abs() < 1e-6);
+        assert!((h.channels[2][0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn histogram_maps_value_to_bin() {
+        // 255 -> bin 63, 0 -> bin 0.
+        let data: Vec<u8> = vec![255, 0, 128, 255];
+        let h = make_histogram(&data).unwrap();
+        assert!((h.channels[0][63] - 1.0).abs() < 1e-6);
+        assert!((h.channels[1][0] - 1.0).abs() < 1e-6);
+        assert!((h.channels[2][31] - 1.0).abs() < 1e-6);
+    }
+}

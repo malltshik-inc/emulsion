@@ -128,24 +128,18 @@ impl HaldLut {
 
 static CACHE: OnceLock<Mutex<HashMap<u16, Arc<HaldLut>>>> = OnceLock::new();
 
-/// Decode a bundled simulation once, then reuse it for previews, thumbnails and
-/// export. The `Arc` keeps the lock short and the memory shared.
+/// Decode a bundled simulation once, then reuse it. The lock is held across
+/// the (slow) decode so two threads can't decode the same LUT concurrently.
 pub fn lut(id: u16) -> Result<Arc<HaldLut>> {
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    {
-        let cache = cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(lut) = cache.get(&id) {
-            return Ok(Arc::clone(lut));
-        }
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(lut) = cache.get(&id) {
+        return Ok(Arc::clone(lut));
     }
     let film = find(id)
         .ok_or_else(|| CoreError::Unsupported(format!("film lut: no simulation with id {}", id)))?;
     let lut = Arc::new(HaldLut::from_png(film.png)?);
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(id, Arc::clone(&lut));
-    Ok(lut)
+    Ok(Arc::clone(cache.entry(id).or_insert(lut)))
 }

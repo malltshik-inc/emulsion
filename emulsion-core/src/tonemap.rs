@@ -1,35 +1,13 @@
 use rayon::prelude::*;
 
 use crate::{
-    colorops::{apply_black_point, apply_exposure, apply_wb, wb_gains},
+    colorops::{apply_black_point, apply_wb, wb_gains},
     film::{self, HaldLut},
     geometry::{crop as crop_image, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::PipelineParams,
+    transfer,
 };
-
-// Standard sRGB transfer function (linear-light in [0,1] -> encoded [0,1]).
-const SRGB_CROSSOVER: f32 = 0.00304;
-const LINEAR_GAIN: f32 = 12.92;
-const SRGB_GAIN: f32 = 1.055;
-const SRGB_OFFSET: f32 = 0.055;
-const SRGB_GAMMA: f32 = 2.4;
-
-fn srgb_encode(v: f32) -> f32 {
-    if v <= SRGB_CROSSOVER {
-        v * LINEAR_GAIN
-    } else {
-        v.powf(1.0 / SRGB_GAMMA) * SRGB_GAIN - SRGB_OFFSET
-    }
-}
-
-fn srgb_decode(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v * LINEAR_GAIN.recip()
-    } else {
-        ((v + SRGB_OFFSET) / SRGB_GAIN).powf(SRGB_GAMMA)
-    }
-}
 
 /// Contrast, shadows/highlights and saturation, applied to sRGB-encoded values.
 ///
@@ -82,33 +60,41 @@ fn write_rgba(rgb: [f32; 3], rgba: &mut [u8]) {
     rgba[3] = 255;
 }
 
-/// Convert a linear-light `LinearImage` to an 8-bit `RgbaImage`,
-/// applying the sRGB gamma (the final step of the pipeline).
-pub fn tonemap_and_quantize(img: &LinearImage, out: &mut RgbaImage) {
-    tonemap_and_quantize_look(img, 0.0, 0.0, 0.0, 0.0, None, out);
-}
-
-fn tonemap_and_quantize_look(
-    img: &LinearImage,
+/// Non-geometry tonemap settings for one render pass.
+struct Look {
     contrast: f32,
     saturation: f32,
     shadows: f32,
     highlights: f32,
+    exposure_gain: f32,
+}
+
+fn tonemap_and_quantize_look(
+    img: &LinearImage,
+    look: &Look,
     film: Option<&HaldLut>,
     out: &mut RgbaImage,
 ) {
     let src = &img.data;
+    let encode = transfer::encode_table();
     out.data
         .par_chunks_exact_mut(4)
         .enumerate()
         .for_each(|(i, rgba)| {
             let pix = i * 3;
+            let g = look.exposure_gain;
             let encoded = [
-                srgb_encode(src[pix].clamp(0.0, 1.0)),
-                srgb_encode(src[pix + 1].clamp(0.0, 1.0)),
-                srgb_encode(src[pix + 2].clamp(0.0, 1.0)),
+                encode[transfer::encode_index(src[pix] * g)],
+                encode[transfer::encode_index(src[pix + 1] * g)],
+                encode[transfer::encode_index(src[pix + 2] * g)],
             ];
-            let mut rgb = apply_look(encoded, contrast, saturation, shadows, highlights);
+            let mut rgb = apply_look(
+                encoded,
+                look.contrast,
+                look.saturation,
+                look.shadows,
+                look.highlights,
+            );
             if let Some(lut) = film {
                 rgb = lut.sample(rgb);
             }
@@ -118,71 +104,85 @@ fn tonemap_and_quantize_look(
 
 /// Full interactive path: apply the param sliders to a developed base and
 /// produce the display/export 8-bit image. Order is WB -> black point ->
-/// crop/rotate -> invert + exposure (cheap ops, re-run live).
+/// rotate/fine-angle/flip/crop -> invert + exposure (cheap ops, re-run live).
 ///
 /// Black point stays *before* inversion (PRODUCT.md §8: it removes the
 /// negative's orange mask). Exposure is applied *after* inversion so +EV
-/// brightens the displayed positive rather than darkening it.
-///
-/// When Develop (invert) is on, the `invert_sensitivity` slider simultaneously raises
-/// exposure, contrast and saturation on top of the per-slider values. The
-/// invert_sensitivity slider only affects the inverted path; positive (non-inverted)
-/// images are untouched by it.
+/// brightens the displayed positive rather than darkening it. When Develop
+/// (invert) is on, the Output (`invert_sensitivity`) slider raises exposure,
+/// contrast and saturation on the invert path only.
 pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
+    let mut work = LinearImage::new(base.width, base.height);
+    let mut out = RgbaImage::new(1, 1);
+    develop_into(base, params, &mut work, &mut out);
+    out
+}
+
+/// Like [`develop`] but reuses caller-owned buffers, so a live slider edit
+/// re-renders without allocating a fresh f32 working base (and output) per
+/// frame — the preview holds two persistent buffers and calls this.
+pub fn develop_into(
+    base: &LinearImage,
+    params: &PipelineParams,
+    work: &mut LinearImage,
+    out: &mut RgbaImage,
+) {
+    work.resize(base.width, base.height);
+    work.data.copy_from_slice(&base.data);
+
     let gains = wb_gains(params.wb_temperature, params.wb_tint);
-    let mut working = base.clone();
 
     // A converted negative is inverted below, so its WB gains are applied to
     // the *positive* instead (otherwise +temperature would cool the result).
     if !params.invert {
-        apply_wb(&mut working, &gains);
+        apply_wb(work, &gains);
     }
-    apply_black_point(&mut working, &params.black_point);
+    apply_black_point(work, &params.black_point);
 
-    let mut img = working;
-
-    if params.rotate_90 != 0 {
-        img = rotate_90(&img, params.rotate_90);
-    }
-    if params.fine_angle != 0.0 {
-        img = rotate_fine(&img, params.fine_angle);
-    }
-    if params.flip_horizontal {
-        img = flip_horizontal(&img);
-    }
-    if let Some(crop) = params.crop {
-        img = crop_image(&img, crop.x, crop.y, crop.width, crop.height);
-    }
+    let geometry = params.rotate_90 != 0
+        || params.fine_angle != 0.0
+        || params.flip_horizontal
+        || params.crop.is_some();
+    let mut owned;
+    let img: &LinearImage = if geometry {
+        owned = std::mem::replace(work, LinearImage::new(0, 0));
+        let mut img = owned;
+        if params.rotate_90 != 0 {
+            img = rotate_90(&img, params.rotate_90);
+        }
+        if params.fine_angle != 0.0 {
+            img = rotate_fine(&img, params.fine_angle);
+        }
+        if params.flip_horizontal {
+            img = flip_horizontal(&img);
+        }
+        if let Some(crop) = params.crop {
+            img = crop_image(&img, crop.x, crop.y, crop.width, crop.height);
+        }
+        owned = img;
+        &owned
+    } else {
+        &*work
+    };
 
     let film = params.film.and_then(|id| film::lut(id).ok());
-    let mut out = RgbaImage::new(img.width, img.height);
+    out.resize(img.width, img.height);
     if params.invert {
-        let conversion_gains = wb_gains(params.wb_temperature, params.wb_tint);
         let exposure_ev = params.exposure + params.invert_sensitivity * 0.05;
-        invert_negative(
-            &img,
-            &conversion_gains,
-            exposure_ev,
-            params,
-            film.as_deref(),
-            &mut out,
-        );
+        invert_negative(img, &gains, exposure_ev, params, film.as_deref(), out);
     } else {
-        apply_exposure(&mut img, params.exposure);
-        tonemap_and_quantize_look(
-            &img,
-            params.contrast,
-            params.saturation,
-            params.shadows,
-            params.highlights,
-            film.as_deref(),
-            &mut out,
-        );
+        let look = Look {
+            contrast: params.contrast,
+            saturation: params.saturation,
+            shadows: params.shadows,
+            highlights: params.highlights,
+            exposure_gain: 2.0_f32.powf(params.exposure),
+        };
+        tonemap_and_quantize_look(img, &look, film.as_deref(), out);
     }
     if params.vignette != 0.0 {
-        apply_vignette(&mut out, params.vignette);
+        apply_vignette(out, params.vignette);
     }
-    out
 }
 
 /// Negative -> positive invert_sensitivity: invert in the sRGB-encoded (perceptual)
@@ -205,6 +205,8 @@ fn invert_negative(
     let contrast = params.contrast + params.invert_sensitivity * 0.2;
     let saturation = params.saturation + params.invert_sensitivity * 0.1;
     let src = &img.data;
+    let encode = transfer::encode_table();
+    let decode = transfer::decode_table();
     out.data
         .par_chunks_exact_mut(4)
         .enumerate()
@@ -212,10 +214,11 @@ fn invert_negative(
             let pix = i * 3;
             let mut encoded = [0.0_f32; 3];
             for (c, value) in encoded.iter_mut().enumerate() {
-                let neg = srgb_encode(src[pix + c].clamp(0.0, 1.0));
+                let neg = encode[transfer::encode_index(src[pix + c])];
                 let pos = 1.0 - neg;
-                let lin = (srgb_decode(pos) * gains[c] * exposure).clamp(0.0, 1.0);
-                *value = srgb_encode(lin);
+                let lin =
+                    (decode[transfer::decode_index(pos)] * gains[c] * exposure).clamp(0.0, 1.0);
+                *value = encode[transfer::encode_index(lin)];
             }
             let mut rgb = apply_look(
                 encoded,

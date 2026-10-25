@@ -69,10 +69,7 @@ impl EmulsionApp {
                 ui.add_space(10.0);
 
                 let (mp, aspect) = match self.current_size() {
-                    Some((w, h)) => (
-                        format!("{:.1}", w as f64 * h as f64 / 1_000_000.0),
-                        aspect_label(w, h),
-                    ),
+                    Some((w, h)) => (crate::util::megapixels(w, h), aspect_label(w, h)),
                     None => (String::from("—"), String::from("—")),
                 };
                 ui.columns(3, |cols| {
@@ -179,16 +176,11 @@ impl EmulsionApp {
         viewport: f32,
     ) -> bool {
         let indent = 8.0 + depth as f32 * 16.0;
-        let name_w = ui.ctx().fonts_mut(|fonts| {
-            fonts
-                .layout_no_wrap(
-                    node.name.clone(),
-                    FontId::proportional(14.0),
-                    Color32::WHITE,
-                )
-                .rect
-                .width()
+        // One layout pass: the galley is measured and then painted as-is.
+        let name_galley = ui.ctx().fonts_mut(|fonts| {
+            fonts.layout_no_wrap(node.name.clone(), FontId::proportional(14.0), MUTED)
         });
+        let name_w = name_galley.rect.width();
         let width = viewport.max(indent + 16.0 + name_w + 16.0);
         let (response, painter) = ui.allocate_painter(vec2(width, 30.0), Sense::click());
         let row = response.rect;
@@ -207,11 +199,10 @@ impl EmulsionApp {
             pos2(row.left() + indent + 16.0, row.top() + 2.0),
             pos2(row.right() - 8.0, row.bottom() - 2.0),
         );
-        painter.with_clip_rect(name_rect).text(
-            pos2(row.left() + indent + 16.0, row.center().y),
-            Align2::LEFT_CENTER,
-            node.name.as_str(),
-            FontId::proportional(14.0),
+        let name_pos = pos2(row.left() + indent + 16.0, row.center().y);
+        painter.with_clip_rect(name_rect).galley(
+            pos2(name_pos.x, name_pos.y - name_galley.rect.height() / 2.0),
+            name_galley,
             MUTED,
         );
         response.on_hover_text(node.path.as_str()).clicked()
@@ -226,17 +217,20 @@ impl EmulsionApp {
         events: &mut TreeEvents,
     ) -> bool {
         let indent = 8.0 + depth as f32 * 16.0;
-        let name = file_name(&self.files[index]);
-        let name_w = ui.ctx().fonts_mut(|fonts| {
-            fonts
-                .layout_no_wrap(name.clone(), FontId::proportional(14.0), Color32::WHITE)
-                .rect
-                .width()
+        let selected = self.cursor == Some(index);
+        let name_color = if selected { TEXT } else { MUTED };
+        // One layout pass: the galley is measured and then painted as-is.
+        let name_galley = ui.ctx().fonts_mut(|fonts| {
+            fonts.layout_no_wrap(
+                file_name(&self.files[index]),
+                FontId::proportional(14.0),
+                name_color,
+            )
         });
+        let name_w = name_galley.rect.width();
         let width = viewport.max(indent + 64.0 + 11.0 + name_w + 20.0);
         let (response, painter) = ui.allocate_painter(vec2(width, 64.0), Sense::click());
         let row = response.rect;
-        let selected = self.cursor == Some(index);
         let inner = row.shrink2(vec2(2.0, 1.0));
 
         if selected {
@@ -288,12 +282,10 @@ impl EmulsionApp {
             pos2(row.right() - 20.0, row.bottom() - 8.0),
         );
         let text_painter = painter.with_clip_rect(text_clip);
-        let name_color = if selected { TEXT } else { MUTED };
-        text_painter.text(
-            pos2(thumb.right() + 11.0, row.center().y - 9.0),
-            Align2::LEFT_CENTER,
-            name,
-            FontId::proportional(14.0),
+        let name_pos = pos2(thumb.right() + 11.0, row.center().y - 9.0);
+        text_painter.galley(
+            pos2(name_pos.x, name_pos.y - name_galley.rect.height() / 2.0),
+            name_galley,
             name_color,
         );
         // Show only the format under a thumbnail; the resolution would read as

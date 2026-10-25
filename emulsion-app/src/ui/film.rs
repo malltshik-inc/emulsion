@@ -64,16 +64,7 @@ impl EmulsionApp {
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let reset = ui
-                    .add(
-                        egui::Button::new(RichText::new("↺").size(15.0).color(DIM))
-                            .fill(egui::Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE)
-                            .corner_radius(6.0)
-                            .min_size(vec2(28.0, 28.0)),
-                    )
-                    .on_hover_text("Reset film simulation");
-                if reset.clicked() {
+                if crate::util::reset_icon_button(ui, "Reset film simulation") {
                     params.film = None;
                 }
             });

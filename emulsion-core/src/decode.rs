@@ -4,6 +4,7 @@ use crate::{
     demosaic::demosaic_bilinear,
     error::{CoreError, Result},
     image::LinearImage,
+    transfer,
 };
 
 use rawler::imgop::matrix::{multiply, normalize, pseudo_inverse};
@@ -27,13 +28,20 @@ pub fn is_supported(path: &str) -> bool {
     is_raw_file(path) || REGULAR_EXTENSIONS.iter().any(|e| lower.ends_with(*e))
 }
 
-// Inverse sRGB (encoded [0,1] -> linear-light).
-fn srgb_decode(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
-    }
+/// 8-bit RGBA bytes (de-gamma'd via the shared sRGB table) into a linear image.
+fn rgba8_to_linear(width: usize, height: usize, raw: &[u8]) -> LinearImage {
+    let table = transfer::decode_table();
+    let mut out = LinearImage::new(width, height);
+    out.data
+        .par_chunks_exact_mut(3)
+        .enumerate()
+        .for_each(|(i, pix)| {
+            let j = i * 4;
+            pix[0] = table[raw[j] as usize];
+            pix[1] = table[raw[j + 1] as usize];
+            pix[2] = table[raw[j + 2] as usize];
+        });
+    out
 }
 
 /// Decode any supported source into linear-light [0,1] `LinearImage`.
@@ -124,19 +132,10 @@ fn decode_regular_thumbnail(path: &str, max_edge: usize) -> Result<ThumbnailImag
     let rgba = small.into_rgba8();
     let width = rgba.width() as usize;
     let height = rgba.height() as usize;
-    let raw_bytes = rgba.as_raw();
-
-    let mut out = LinearImage::new(width, height);
-    out.data
-        .par_chunks_exact_mut(3)
-        .enumerate()
-        .for_each(|(i, pix)| {
-            let j = i * 4;
-            pix[0] = srgb_decode(raw_bytes[j] as f32 / 255.0);
-            pix[1] = srgb_decode(raw_bytes[j + 1] as f32 / 255.0);
-            pix[2] = srgb_decode(raw_bytes[j + 2] as f32 / 255.0);
-        });
-    Ok(ThumbnailImage { image: out, size })
+    Ok(ThumbnailImage {
+        image: rgba8_to_linear(width, height, rgba.as_raw()),
+        size,
+    })
 }
 
 fn decode_raw(path: &str) -> Result<LinearImage> {
@@ -197,17 +196,5 @@ fn decode_regular(path: &str) -> Result<LinearImage> {
     let dim = rgba.dimensions();
     let width = dim.0 as usize;
     let height = dim.1 as usize;
-    let raw_bytes = rgba.as_raw();
-
-    let mut out = LinearImage::new(width, height);
-    out.data
-        .par_chunks_exact_mut(3)
-        .enumerate()
-        .for_each(|(i, pix)| {
-            let j = i * 4;
-            pix[0] = srgb_decode(raw_bytes[j] as f32 / 255.0);
-            pix[1] = srgb_decode(raw_bytes[j + 1] as f32 / 255.0);
-            pix[2] = srgb_decode(raw_bytes[j + 2] as f32 / 255.0);
-        });
-    Ok(out)
+    Ok(rgba8_to_linear(width, height, rgba.as_raw()))
 }

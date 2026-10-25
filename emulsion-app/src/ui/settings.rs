@@ -9,9 +9,9 @@ use emulsion_core::film;
 use emulsion_core::params::PipelineParams;
 
 use crate::app::EmulsionApp;
+use crate::crop_math::normalize_crop;
 use crate::model::{CropDrag, Orientation, Tool};
 use crate::theme::{ACCENT, ACCENT_LINE, ACCENT_SOFT, DIM, HOVER, LINE, MUTED, PANEL_TOP, TEXT};
-use crate::ui::crop::normalize_crop;
 
 impl EmulsionApp {
     pub(crate) fn settings_panel(&mut self, ui: &mut egui::Ui) {
@@ -237,16 +237,7 @@ fn tool_body(ui: &mut egui::Ui, tool: Tool, params: &mut PipelineParams) {
                 },
             );
 
-            let reset_clicked = ui
-                .add(
-                    egui::Button::new(RichText::new("↺").size(15.0).color(DIM))
-                        .fill(Color32::TRANSPARENT)
-                        .stroke(Stroke::NONE)
-                        .corner_radius(6.0)
-                        .min_size(vec2(28.0, 28.0)),
-                )
-                .on_hover_text("Reset adjustment")
-                .clicked();
+            let reset_clicked = crate::util::reset_icon_button(ui, "Reset adjustment");
             if reset_clicked {
                 *value = 0.0;
                 if tool == Tool::Rotate {
@@ -259,17 +250,10 @@ fn tool_body(ui: &mut egui::Ui, tool: Tool, params: &mut PipelineParams) {
 }
 
 fn rotate_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
-    let btn = |label: &str| {
-        egui::Button::new(RichText::new(label).size(12.0).color(MUTED))
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::new(1.0, LINE))
-            .corner_radius(6.0)
-            .min_size(vec2(52.0, 28.0))
-    };
-    if ui.add(btn("90L")).clicked() {
+    if crate::util::small_toggle_button(ui, "90L", false).clicked() {
         params.rotate_90 = (params.rotate_90 + 3) % 4;
     }
-    if ui.add(btn("90R")).clicked() {
+    if crate::util::small_toggle_button(ui, "90R", false).clicked() {
         params.rotate_90 = (params.rotate_90 + 1) % 4;
     }
     let flip = egui::Button::new(RichText::new("FLIP").size(12.0).color(
@@ -301,18 +285,7 @@ fn rotate_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
 }
 
 fn develop_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
-    let btn = |label: &str| {
-        egui::Button::new(RichText::new(label).size(12.0).color(MUTED))
-            .fill(if params.invert {
-                ACCENT_SOFT
-            } else {
-                Color32::TRANSPARENT
-            })
-            .stroke(Stroke::new(1.0, LINE))
-            .corner_radius(6.0)
-            .min_size(vec2(52.0, 28.0))
-    };
-    if ui.add(btn("DEVELOP")).clicked() {
+    if crate::util::small_toggle_button(ui, "DEVELOP", params.invert).clicked() {
         params.invert = !params.invert;
     }
     ui.add_space(4.0);

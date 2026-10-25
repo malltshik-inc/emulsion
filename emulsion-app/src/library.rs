@@ -101,7 +101,6 @@ impl EmulsionApp {
         if let Some(p) = dir {
             let path = p.to_string_lossy().into_owned();
             self.save_current();
-            self.folder = path.clone();
             self.cursor = None;
             self.loaded = None;
             self.texture = None;
@@ -140,6 +139,9 @@ impl EmulsionApp {
     }
 
     pub(crate) fn select_file(&mut self, index: usize) {
+        if self.cursor == Some(index) && self.loaded.is_some() {
+            return;
+        }
         self.save_current();
         self.cursor = Some(index);
         self.params = self
@@ -284,7 +286,9 @@ impl EmulsionApp {
         self.thumb_textures = vec![None; self.files.len()];
         self.thumb_sizes = vec![None; self.files.len()];
         self.thumb_params = vec![None; self.files.len()];
-        self.thumbs_dirty = true;
+        // A new folder invalidates any queued indices and the dedup flags.
+        self.thumbs_pending.clear();
+        self.thumb_queued = vec![false; self.files.len()];
         let visible = visible_indices(&self.tree, &self.expanded);
         self.start_thumbnail_worker(visible);
     }
@@ -312,7 +316,7 @@ impl EmulsionApp {
                             if data.index < self.thumb_bases.len() {
                                 self.thumb_bases[data.index] = Some(data.base);
                                 self.thumb_sizes[data.index] = Some(data.source_size);
-                                self.thumbs_dirty = true;
+                                self.enqueue_thumbnail(data.index);
                             }
                         }
                         None => {
@@ -360,16 +364,9 @@ impl EmulsionApp {
         let Some(path) = self.files.get(index) else {
             return String::from("OPEN A FOLDER");
         };
-        let extension = std::path::Path::new(path)
-            .extension()
-            .map(|value| value.to_string_lossy().to_uppercase())
-            .unwrap_or_else(|| String::from("IMAGE"));
+        let extension = crate::util::file_extension(path);
         match self.current_size() {
-            Some((w, h)) => format!(
-                "{} · {:.1} MP",
-                extension,
-                w as f64 * h as f64 / 1_000_000.0
-            ),
+            Some((w, h)) => format!("{} · {} MP", extension, crate::util::megapixels(w, h)),
             None => extension,
         }
     }

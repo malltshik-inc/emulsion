@@ -20,7 +20,7 @@ emulsion-app/    egui frontend — opens files, runs the pipeline, draws + expor
 Everything the product does is one pure function in `emulsion-core`:
 
 ```
-process(source_path, params: PipelineParams) -> RgbaImage
+process(source: &str, params: &PipelineParams) -> Result<RgbaImage>
 ```
 
 The app never mutates image state. The user edits a `PipelineParams` struct; the
@@ -38,18 +38,18 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 
 | module | responsibility |
 |---|---|
-| `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point; re-exports public types |
+| `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point |
 | `params.rs` | `PipelineParams` + `CropRect` — serde `Serialize/Deserialize`, `Default` impl |
 | `image.rs` | `RgbaImage` (RGBA8 interleaved `Vec<u8>`) and `LinearImage` (flat RGB interleaved `Vec<f32>`), both `(width, height, data)` |
 | `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `decode_thumbnail(path, max_edge)` sub-samples the Bayer grid *before* demosaic for a fast small preview; `is_supported(path)` is the shared extension filter |
 | `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
-| `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
+| `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point` (rayon-parallel, in place) |
 | `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `flip_horizontal`, `downscale` (box average) |
 | `film.rs` | bundled film simulations: generated `FILMS` registry, lazy decoded `HaldLut` cache, trilinear sampling |
 | `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate/flip → invert+exposure → contrast/shadows/highlights/saturation → film LUT → vignette) |
 | `export.rs` | `save_png`, `save_jpeg` (quality 1..100), `save_sidecar` (`<name>.emulsion.json`: source + params + film name) |
 | `error.rs` | `CoreError`, `Result<T>` = `std::result::Result<T, CoreError>` |
-| `tests.rs` | 37 unit tests, one per op (incl. robust-bounds, inversion, conversion baseline, Hald and sidecar tests) |
+| `tests.rs` | unit tests for every op — robust-bounds, inversion, Hald, sidecar, downscale, develop integration |
 
 `build.rs` scans `assets/film/{bw,color}/*.png` and emits `film_registry.rs`
 (`include_bytes!` per LUT), so adding a PNG is enough to make it appear in the UI.
@@ -59,12 +59,13 @@ RawTherapee level-12 collection; see `assets/film/ATTRIBUTION.md` (CC BY-SA 4.0)
 Fonts are **bundled** (Ubuntu Regular/Medium + Ubuntu Mono, UFL, under
 `emulsion-app/assets/fonts/`) and installed by `install_fonts` via
 `include_bytes!` — there are no OS font paths, so the UI is identical on every
-platform. App icons live in `emulsion-app/assets/icons/`; `[package.metadata.packager]`
-in `emulsion-app/Cargo.toml` plus `.github/workflows/release.yml` build
-`.exe`/`.dmg`/`.deb` installers on a `v*` tag, a published release, or manually.
-`icon.ico` embeds 16/24/32/48/64/128/256 px (PNG for 256, BMP for the rest) and
-`icon.icns` embeds 16–1024 px PNG chunks; `logo.png` (the top-bar mark, 128 px) is
-branding too. All are downscaled from a 1024 px square master.
+platform. Branding: `assets/logo.png` (top-bar mark, 128 px) and
+`assets/icons/` (`icon-256.png`, `icon-512.png`, `icon.ico`, `icon.icns`).
+`[package.metadata.packager]` in `emulsion-app/Cargo.toml` plus
+`.github/workflows/release.yml` build `nsis`/`dmg`/`deb` installers on a `v*`
+tag, a published release, or manually. `icon.ico` embeds 16–256 px (BMP, 256
+PNG) and `icon.icns` embeds 16–1024 px PNG chunks, all downscaled from a
+1024 px square master.
 
 On Windows the icon must be embedded in **two** places, or the app looks
 unbranded even when the installer succeeds: `emulsion-app/build.rs` uses
@@ -87,6 +88,7 @@ method in its own `ui/` file.
 | `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste (+ Ctrl/Cmd+C/V on the selected file) |
 | `theme.rs` | palette + layout constants, bundled fonts, egui style, logo/window icon |
 | `model.rs` | `Tool`, `CropAspect`, `Orientation`, `CropDrag`, decoded-image structs (`Loaded`, `ThumbData`) |
+| `crop_math.rs` | pure crop geometry: fractional<->screen mapping, drag/resize/draw math (unit-tested) |
 | `library.rs` | folder scan (tree), file selection + settings, background decode, on-demand thumbnail worker |
 | `preview.rs` | preview/thumbnail texture sync from `develop` |
 | `histogram.rs` | histogram computation + painting |
@@ -96,7 +98,7 @@ method in its own `ui/` file.
 | `ui/settings.rs` | tool search + tab strip, expanded slider/rotate/develop panel |
 | `ui/film.rs` | film simulation search, strip, lazily generated cards/previews |
 | `ui/stage.rs` | canvas paint, zoom/pan, loading state, background gradient |
-| `ui/crop.rs` | crop overlay, handles/drag math, aspect/orientation controls |
+| `ui/crop.rs` | crop overlay, handles + aspect/orientation controls (the drag math lives in `crop_math.rs`) |
 | `ui/toast.rs` | transient status toast |
 | `util.rs` | path labels, aspect label, cover UV |
 
@@ -106,7 +108,7 @@ State held by `EmulsionApp`:
 |---|---|
 | `folder`, `files`, `cursor` | the opened folder; `files` is the flat image list (DFS leaf order over the tree) that the cursor, settings and export index into |
 | `tree`, `expanded` | library tree (`TreeNode`: file leaf or folder with children) + the set of expanded folder paths (start empty, so folders begin closed) |
-| `loaded: Option<Loaded>` | preview base (`LinearImage`, downscaled to ≤1800 px longest edge) |
+| `loaded: Option<Loaded>` | preview bases: ≤2000 px crisp + ≤1600 px draft (`base_small`, `base_draft`) |
 | `load_rx` | mpsc `Receiver` for the background decode result |
 | `thumb_bases`, `thumb_textures` | per-file ≤96 px thumbnail base + its egui texture (one per row) |
 | `thumb_rx`, `thumb_cancel`, `thumb_generation` | background thumbnail worker channel + cancel flag + stale-result guard |
@@ -118,17 +120,14 @@ State held by `EmulsionApp`:
 | `zoom`, `pan` | canvas transform |
 | `status`, `dirty` | status line + re-render flag; `thumbs_dirty` rebuilds row thumbnails |
 
-`EmulsionApp::new` calls `ctx.set_zoom_factor(1.2)` — the size previously reached
-with two `Ctrl+=` presses — so fonts and widgets start ~20% larger.
-
 Workflow in `App::ui` each frame:
 1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
-2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
-3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` and upload only the rows whose params differ from the cached `thumb_params` (the selected row uses the live `params`), so dragging one file's sliders does not rebuild all rows.
+2. `sync_texture()` — if `dirty`, `develop_into(base_small|base_draft, params)` into persistent buffers → upload RGB(A8) bytes to texture; queues the selected row's thumbnail. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
+3. `sync_thumbnails()` — drains `thumbs_pending` (one index per received thumbnail base or param change) and develops/upload the rows whose params differ from the cached `thumb_params`; no full sweep of the folder.
 4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
    central canvas); each panel calls its own method on `self` (keeps the egui
    closures single-capture).
-5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders the library tree (`render_tree` walks `self.tree`): folder rows are painted rows that toggle `self.expanded`, image rows are the 64 px thumbnail rows. Thumbnail decoding is on-demand — `refresh_thumbnails` on folder open decodes only the currently visible leaves, and a folder-expand/collapse frame runs `schedule_visible_thumbnails`, which cancels the old worker (generation bump) and decodes only the visible leaves whose base is still `None`. Scheduling is gated on a toggle actually happening that frame: scheduling every frame would cancel the worker before it finished a slow RAW. Collapsed folders' files are never decoded. Rows size their width to their content (name + indentation), so deep names widen the scroll area's content; `ScrollArea::both()` makes the overflow reachable with the horizontal scrollbar or Shift + wheel. No separate preview pane.
+5. Canvas: `allocate_painter` + `egui::Image::from_texture(texture).paint_at(ui, frame_rect)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders the library tree (`render_tree` walks `self.tree`): folder rows are painted rows that toggle `self.expanded`, image rows are the 64 px thumbnail rows. Thumbnail decoding is on-demand — `refresh_thumbnails` on folder open decodes only the currently visible leaves, and a folder-expand/collapse frame runs `schedule_visible_thumbnails`, which cancels the old worker (generation bump) and decodes only the visible leaves whose base is still `None`. Scheduling is gated on a toggle actually happening that frame: scheduling every frame would cancel the worker before it finished a slow RAW. Collapsed folders' files are never decoded. Rows size their width to their content (name + indentation), so deep names widen the scroll area's content; `ScrollArea::both()` makes the overflow reachable with the horizontal scrollbar or Shift + wheel. No separate preview pane.
 
 Selecting a row calls `select_file`: it stores the current `params` under the old
 path, then loads the new path's stored params (`PipelineParams::default()` if the
@@ -145,29 +144,26 @@ source
           └ develop()            [interactive path, re-runs on every param edit]
               WB gains           temperature/tint → per-channel multiply (positive path only)
               black point ×3     (v - bp) / (1 - bp), clamped [0, 0.98]  (pre-invert: kills the orange mask)
-              crop               fractional rect  (params.crop)
               rotate 90°         u8 0..3 quarter turns
               fine angle         bilinear around center, white fill outside
               flip horizontal    left column <-> right column
+              crop               fractional rect  (params.crop) — applied last
               ─ encode to display values ─
               positive           exposure (2^EV linear), then sRGB gamma
               negative           sRGB-encode the negative, 1 − encoded, decode to
-                                 linear, ×(gains+WB baseline)×2^(EV+EV baseline), re-encode
-              contrast           smoothstep S-curve blended by (contrast+baseline)/100
+                                 linear, ×WB gains×2^EV, re-encode
+              contrast           smoothstep S-curve blended by (contrast+boost)/100
               shadows/highlights squared-weight lift/lower of the dark/bright ends
-              saturation         scale distance from Rec.709 luma by 1+(sat+baseline)/100
+              saturation         scale distance from Rec.709 luma by 1+(sat+boost)/100
               film LUT           trilinear sample of the selected Hald CLUT
               quantize           round → u8, alpha 255
               vignette           radial corner darken/brighten on the 8-bit result
 ```
 
-The **negative → positive conversion has a built-in baseline** (EV +1.4,
-WB temperature +70, contrast +40, saturation +20; constants in `tonemap.rs`).
-Without it the conversion is too dark and too pale. The baseline is added on top
-of the slider values in the invert path only, so the sliders stay offsets
-(0 = baseline) and the positive path is untouched. `develop_defaults_apply_conversion_baseline`
-pins this: a neutral invert must equal the tuned look, and cancelling the offsets
-must be visibly darker/flatter.
+The **Output slider** (`invert_sensitivity`) is the negative→positive "look"
+control: on the invert path it raises exposure (`+0.05·k` EV), contrast
+(`+0.2·k`) and saturation (`+0.1·k`) on top of the per-slider values, so the
+sliders stay offsets and the positive path is untouched.
 
 Film LUTs run last (RawTherapee convention) on sRGB-encoded values, in both the
 positive and inverted paths. The decoded cube is cached per id in a process-wide
@@ -218,11 +214,9 @@ values before the gamma encode lifts the midtones and flattens the print — the
 "pale and too bright" look, and why −EV alone only made it grey. `develop` now
 inverts the sRGB-encoded negative (`1 − encode(t)`) and applies WB/exposure to
 the decoded positive afterwards. This keeps blacks black and gives the sliders
-positive semantics (+EV brightens, +temperature warms). A fixed conversion
-baseline (EV +1.4, WB +70, contrast +40, saturation +20) is added on top of the
-sliders so the default conversion is usable instead of dark and pale. It is still
-a plain per-channel inversion: a film toe/shoulder curve and saturation recovery
-are not implemented yet (see TODO).
+positive semantics (+EV brightens, +temperature warms). It is still a plain
+per-channel inversion: a film toe/shoulder curve and saturation recovery
+are not implemented yet (see Limitations).
 
 ---
 
@@ -266,11 +260,8 @@ Confirmed widget/API surface (versions pinned in `emulsion-app/Cargo.toml`):
 ```
 Panel::top/left/right/bottom(id).exact_size/.default_size/.min_size.show(ui, |ui| …)  (no SidePanel/Side enum)
 CentralPanel::default().show(ui, |ui| …)   — added LAST
-Panel::bottom works too — used for the status line
+Panel::bottom works too (the sidebar histogram footer uses it)
 ScrollArea::both().show(ui, |ui| …)  → ScrollAreaOutput<R> with .inner: R
-ui.take_available_space()  — REQUIRED inside side panels to make them resizable
-CollapsingHeader::new("Title").default_open(true).open(Some(true)|None).show(ui, |ui| …)
-ui.collapsing("Title", |ui| …)  — starts collapsed
 ui.button("…").clicked(), ui.checkbox(&mut bool, "…").changed(), ui.heading(…), ui.label(…)
 Slider::new(&mut f32, -100.0..=100.0).changed()  — value is shown by default; `.text(…)` adds an inline label
 ui.spacing_mut().slider_width = (ui.available_width() - 64.0).max(80.0)  — let the rail fill the tools panel
@@ -280,7 +271,7 @@ ui.horizontal(|ui| …)  — row layout
 ColorImage::from_rgba_unmultiplied([w,h], &rgba) → ctx.load_texture(name, image, TextureOptions::LINEAR) → TextureHandle
 handle.set(image, opts)   — cheap re-upload; TextureHandle Clone is ref-counted (cheap)
 ui.allocate_painter(size, Sense::hover()/click()/click_and_drag()) → (response, painter)
-painter.image(tex.id(), rect, full_uv, Color32::WHITE)
+egui::Image::from_texture(tex).fit_to_exact_size(size).paint_at(ui, rect)
 painter.rect_filled(response.rect, 0.0, color); painter.text(pos, Align2::LEFT_TOP, s, FontId::proportional(13.0), Color32::WHITE)
 ui.input(|i| i.smooth_scroll_delta().y)             — wheel
 i.pointer.delta() with response.is_pointer_button_down_on() — pan only when the press started on the canvas
@@ -351,11 +342,11 @@ None of this is wired into the UI yet (see 8).
    `PathBuf -> String` via `into_string().unwrap()`.
 9. **Closures over `self.files[i]`** move the `String` out — always `let label = &self.files[i]`
    then `format!("{}", *label)`.
-10. **A side panel only resizes while its content consumes the available space.**
-    A `ScrollArea` or a `Separator`, or `ui.take_available_space()` at the top of the
-    panel's closure, is what makes the resize drag actually do anything. Without it the
-    cursor changes to the resize icon but the width stays put. Left/right panels do
-    call `take_available_space()` on purpose.
+10. **A resizable egui panel needs its content to consume the available space.**
+     A `ScrollArea`, a `Separator`, or `ui.take_available_space()` at the top of
+     the panel's closure is what makes the resize drag actually do anything.
+     Emulsion's side panel is fixed-width (`exact_size(SIDEBAR_WIDTH)`), so this
+     only matters if a future change makes it resizable.
 11. **`vec[i].get(j).is_none()` tests the *outer* `Option`.** `self.thumb_bases` is
     `Vec<Option<LinearImage>>`, so `.get(j)` is `Option<&Option<LinearImage>>` and
     `.is_none()` is `false` for every in-bounds index whether or not the base is
@@ -377,8 +368,8 @@ None of this is wired into the UI yet (see 8).
     (`maintain_aspect_ratio(false)`), so a mismatch stretches the image. The old
     derivation `base_w/base_h` (+ a manual `rotate_90` swap) ignored `params.crop`,
     so a narrow crop was stretched wide on the canvas while the exported file
-    stayed correct. Since `develop` already applies crop → rotate → fine-angle →
-    flip, `sync_texture` normalizes `out.width/height` to the downscaled base's
+    stayed correct. Since `develop` already applies rotate → fine angle → flip →
+    crop, `sync_texture` normalizes `out.width/height` to the downscaled base's
     longest edge — keeping `texture_size` *identical* between a draft (1600) and a
     crisp (2000) render, so the canvas geometry (fit/zoom) never jumps when a
     slider drag swaps resolutions. Pinned by
@@ -396,12 +387,12 @@ None of this is wired into the UI yet (see 8).
 3. **Export re-decodes + re-develops the source from scratch.** The app does not keep
    the full-res base in memory between preview and export (deliberate trade, see 1).
    For multiple exports of the same image this repeats decoding work. Each export
-   also writes `<name>.emulsion.json` (source path + `PipelineParams` + film name);
-   a failed sidecar write is reported in the status line but does not invalidate
-   the image.
+   writes only the image file; the `<name>.emulsion.json` sidecar writer exists in
+   core but is a backlog item (see PRODUCT.md §13), so no sidecar is produced.
 4. **`rotate_fine` extra**: fine angle is bilinear with **white fill** outside the
-   source — corners become white. Straighten-then-crop is the natural workflow and
-   crop is applied *before* rotation, so the UI should offer crop before fine angle.
+   source — corners become white. Crop is applied **after** rotation (the last
+   geometry op), so the white fill is cropped away: straighten-then-crop is the
+   built-in behaviour, no timed UI needed.
 5. **WB temperature/tint sliders** are a simplified gain model
    (`1 + 0.30·t`, `1 + 0.15·m` around neutral). They are a knob, not a colourimetric
    temperature; refining them toward a real Kelvin/CIE model is continuing work (Percept `PRODUCT.md`).
@@ -412,6 +403,7 @@ None of this is wired into the UI yet (see 8).
 8. **Not in the UI yet** (core supports the mechanism, UI wiring pending):
    - undo history (params stack)
    - patch-file autosave/restore and presets
+   - `<name>.emulsion.json` sidecar write on export
    - persist last folder / last export settings (OS config JSON, per PRODUCT.md)
 9. **App modules are split by concern.** `main.rs` is only entry wiring; state
    lives in `app.rs` and panels live in `ui/`. Add new UI code to the matching
@@ -445,7 +437,7 @@ None of this is wired into the UI yet (see 8).
     out of view or inside a collapsed folder; selection still holds.
 14. **Thumbnails use the fast `decode_thumbnail` path, not `decode`.** RAW thumbs
     sub-sample the Bayer grid (`thumbnail_stride`, `stride ≡ 1 (mod CFA period)`
-    so the phase survives) and demosaic only ~1/450th of a 64MP frame, instead of
+    so the phase survives) and demosaic only ~1/625th of a 64MP frame, instead of
     demosaicing the full frame + allocating a f32 base + box-downscaling. Regular
     images decode fully (already fast) then `image`'s `thumbnail`. The true source
     dimensions still come back in `ThumbnailImage.size` for the footer/crop
@@ -484,10 +476,8 @@ managed-runtime (Java/Kotlin) reviewer's perspective.
 
 ## 10. Verification
 
-- `cargo test` — 37 core unit tests (every op + serde roundtrip + sidecar JSON +
-  Hald identity/geometry + film registry + B&W desaturation + conversion baseline +
-  demosaic shape + downscale + develop-invert integration + post-invert
-  exposure/WB direction + contrast/saturation response).
+- `cargo test` — core and app unit suites pass; keep every op covered (the suite
+  grows with each op, no hard count).
 - `cargo fmt`, `cargo clippy` — both clean across the workspace.
 - Manual smoke: `cargo build --release && target\release\emulsion-app.exe` — open
   a folder with ORF/ARW files, click a file, drag sliders, `Export…`.

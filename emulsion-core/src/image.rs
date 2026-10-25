@@ -14,12 +14,18 @@ impl RgbaImage {
             data: vec![0_u8; width * height * 4],
         }
     }
+
+    /// Re-dimension in place, reusing the allocation when the capacity fits.
+    pub fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.data.resize(width * height * 4, 0);
+    }
 }
 
 /// Working image: one flat f32 buffer, RGB interleaved (stride = 3),
-/// values in linear light 0.0..1.0 (raw output) or sRGB-encoded 0.0..1.0
-/// (regular photos). A single interleaved buffer keeps every op safely
-/// parallelizable with rayon: we iterate chunks of the buffer we write.
+/// values in linear light 0.0..1.0. A single interleaved buffer keeps every op
+/// safely parallelizable with rayon: we iterate chunks of the buffer we write.
 #[derive(Clone, PartialEq, Debug)]
 pub struct LinearImage {
     pub width: usize,
@@ -36,13 +42,16 @@ impl LinearImage {
         }
     }
 
+    /// Re-dimension in place, reusing the allocation when the capacity fits.
+    pub fn resize(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.data.resize(width * height * 3, 0.0);
+    }
+
     pub fn pixel(&self, x: usize, y: usize) -> (f32, f32, f32) {
         let i = (y * self.width + x) * 3;
         (self.data[i], self.data[i + 1], self.data[i + 2])
-    }
-
-    pub fn px(&self, x: usize, y: usize) -> (f32, f32, f32) {
-        self.pixel(x, y)
     }
 
     pub fn set_px(&mut self, x: usize, y: usize, r: f32, g: f32, b: f32) {

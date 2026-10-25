@@ -2,18 +2,35 @@
 
 use eframe::egui;
 use egui::vec2;
-use emulsion_core::tonemap::develop;
+use emulsion_core::tonemap::{develop, develop_into};
 
 use crate::app::EmulsionApp;
 use crate::histogram::make_histogram;
 use crate::model::Tool;
 
+/// Queue `index` once per drain: the flag array stops duplicates piling up when
+/// several rows update in the same frame (out-of-range indices are ignored).
+pub(crate) fn enqueue_unique(pending: &mut Vec<usize>, queued: &mut [bool], index: usize) {
+    if index < queued.len() && !queued[index] {
+        queued[index] = true;
+        pending.push(index);
+    }
+}
+
 impl EmulsionApp {
+    pub(crate) fn enqueue_thumbnail(&mut self, index: usize) {
+        enqueue_unique(&mut self.thumbs_pending, &mut self.thumb_queued, index);
+    }
+
     pub(crate) fn sync_thumbnails(&mut self, ctx: &egui::Context) {
-        if !self.thumbs_dirty {
+        if self.thumbs_pending.is_empty() {
             return;
         }
-        for i in 0..self.thumb_bases.len() {
+        let pending = std::mem::take(&mut self.thumbs_pending);
+        for i in pending {
+            if let Some(flag) = self.thumb_queued.get_mut(i) {
+                *flag = false;
+            }
             let params = self.params_for_index(i);
             let Some(base) = &self.thumb_bases[i] else {
                 continue;
@@ -37,7 +54,6 @@ impl EmulsionApp {
                 *slot = Some(params);
             }
         }
-        self.thumbs_dirty = false;
     }
 
     pub(crate) fn sync_texture(&mut self, ui: &mut egui::Ui) {
@@ -60,7 +76,14 @@ impl EmulsionApp {
             &loaded.base_small
         };
 
-        let out = develop(source_img, &preview_params);
+        // Develop into the persistent buffers — a slider tick allocates nothing.
+        develop_into(
+            source_img,
+            &preview_params,
+            &mut self.preview_scratch,
+            &mut self.preview_out,
+        );
+        let out = &self.preview_out;
         let w = out.width as u32;
         let h = out.height as u32;
 
@@ -100,7 +123,36 @@ impl EmulsionApp {
             ui.ctx().request_repaint();
         } else {
             self.dirty = false;
-            self.thumbs_dirty = true;
+            // The selected row's thumbnail follows the live params.
+            if let Some(i) = self.cursor {
+                self.enqueue_thumbnail(i);
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enqueue_unique;
+
+    #[test]
+    fn enqueue_dedupes_until_drained() {
+        let mut pending = Vec::new();
+        let mut queued = [false; 4];
+        // Several rows updating in one frame must not duplicate pushes.
+        enqueue_unique(&mut pending, &mut queued, 1);
+        enqueue_unique(&mut pending, &mut queued, 1);
+        enqueue_unique(&mut pending, &mut queued, 2);
+        enqueue_unique(&mut pending, &mut queued, 99); // stale index ignored
+        assert_eq!(pending, vec![1, 2]);
+
+        // A drain clears the flags, so the same rows can be enqueued again.
+        for i in &pending {
+            queued[*i] = false;
+        }
+        pending.clear();
+        enqueue_unique(&mut pending, &mut queued, 1);
+        enqueue_unique(&mut pending, &mut queued, 1);
+        assert_eq!(pending, vec![1]);
     }
 }

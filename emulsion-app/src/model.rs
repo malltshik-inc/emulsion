@@ -183,7 +183,7 @@ pub(crate) enum Orientation {
     Landscape,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CropDrag {
     None,
     Draw, // drawing a fresh rect

@@ -12,10 +12,9 @@ use emulsion_core::params::{CropRect, PipelineParams};
 
 use crate::histogram::Histogram;
 use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool, TreeNode};
-use crate::theme::{install_fonts, install_style, load_logo};
+use crate::theme::{OPEN_FOLDER_HINT, install_fonts, install_style, load_logo};
 
 pub(crate) struct EmulsionApp {
-    pub(crate) folder: String,
     pub(crate) files: Vec<String>,
     pub(crate) tree: Vec<TreeNode>,
     pub(crate) expanded: HashSet<String>,
@@ -32,16 +31,22 @@ pub(crate) struct EmulsionApp {
     pub(crate) thumb_rx: Option<Receiver<ThumbMessage>>,
     pub(crate) thumb_cancel: Option<Arc<AtomicBool>>,
     pub(crate) thumb_generation: u64,
-    pub(crate) thumbs_dirty: bool,
+    pub(crate) thumbs_pending: Vec<usize>,
+    pub(crate) thumb_queued: Vec<bool>,
 
     pub(crate) params: PipelineParams,
     pub(crate) settings: HashMap<String, PipelineParams>,
+    // Reused develop buffers so a slider tick allocates nothing.
+    pub(crate) preview_scratch: emulsion_core::image::LinearImage,
+    pub(crate) preview_out: emulsion_core::image::RgbaImage,
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) texture_size: Option<Vec2>,
     pub(crate) zoom: f32,
     pub(crate) fit_zoom: f32,
     pub(crate) last_stage: Vec2,
     pub(crate) pan: Vec2,
+    // Cached stage backdrop, rebuilt only when the canvas rect changes.
+    pub(crate) stage_bg: Option<(egui::Rect, Vec<egui::Shape>)>,
 
     pub(crate) open_tool: Option<Tool>,
     pub(crate) tool_search: String,
@@ -81,7 +86,6 @@ impl EmulsionApp {
         install_style(&cc.egui_ctx);
         let logo = load_logo(&cc.egui_ctx);
         Self {
-            folder: String::new(),
             files: Vec::new(),
             tree: Vec::new(),
             expanded: HashSet::new(),
@@ -96,15 +100,19 @@ impl EmulsionApp {
             thumb_rx: None,
             thumb_cancel: None,
             thumb_generation: 0,
-            thumbs_dirty: false,
+            thumbs_pending: Vec::new(),
+            thumb_queued: Vec::new(),
             params: PipelineParams::default(),
             settings: HashMap::new(),
+            preview_scratch: emulsion_core::image::LinearImage::new(0, 0),
+            preview_out: emulsion_core::image::RgbaImage::new(0, 0),
             texture: None,
             texture_size: None,
             zoom: 0.0,
             fit_zoom: 0.0,
             last_stage: Vec2::ZERO,
             pan: Vec2::ZERO,
+            stage_bg: None,
             open_tool: None,
             tool_search: String::new(),
             focus_search: false,
@@ -117,7 +125,7 @@ impl EmulsionApp {
             histogram: None,
             logo,
             wordmark_family,
-            status: String::from("Open a folder to start"),
+            status: String::from(OPEN_FOLDER_HINT),
             toast: None,
             dirty: true,
             clipboard: None,
@@ -167,7 +175,7 @@ impl EmulsionApp {
         } else if let Some(path) = self.files.get(index) {
             self.settings.insert(path.clone(), p);
         }
-        self.thumbs_dirty = true;
+        self.enqueue_thumbnail(index);
         self.show_toast("Settings pasted");
     }
 
@@ -245,7 +253,7 @@ impl eframe::App for EmulsionApp {
         if self.dirty {
             self.sync_texture(ui);
         }
-        if self.thumbs_dirty {
+        if !self.thumbs_pending.is_empty() {
             self.sync_thumbnails(ui.ctx());
         }
 

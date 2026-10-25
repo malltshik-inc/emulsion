@@ -73,32 +73,60 @@ pub fn demosaic_bilinear(width: usize, height: usize, bayer: &[u16], cfa: &CFA) 
     let (lo, hi) = robust_bounds(width, height, bayer, cfa);
     let span = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
 
+    // Precompute the 3x3 neighbour offsets that carry each CFA colour, per
+    // pattern phase. The colour of a neighbour depends only on the phase, so
+    // the hot loop below never calls `color_at` again.
+    let pw = cfa.width.max(1);
+    let ph = cfa.height.max(1);
+    let phases = ph * pw;
+    let mut offsets = vec![[(0_i32, 0_i32); 9]; phases * 3];
+    let mut counts = vec![[0_u8; 3]; phases];
+    for py in 0..ph {
+        for px in 0..pw {
+            let base = (py * pw + px) * 3;
+            for c in 0..3 {
+                let mut n = 0;
+                for dy in -1_i32..=1 {
+                    for dx in -1_i32..=1 {
+                        let yy = (py as i32 + dy).rem_euclid(ph as i32) as usize;
+                        let xx = (px as i32 + dx).rem_euclid(pw as i32) as usize;
+                        if cfa.color_at(yy, xx) == c {
+                            offsets[base + c][n] = (dx, dy);
+                            n += 1;
+                        }
+                    }
+                }
+                counts[py * pw + px][c] = n as u8;
+            }
+        }
+    }
+
     let mut out = LinearImage::new(width, height);
     // Each item is a mutable row slice of `width * 3` f32 (RGB interleaved).
     out.data
         .par_chunks_exact_mut(width * 3)
         .enumerate()
         .for_each(|(y, row)| {
+            let py = y % ph;
             for x in 0..width {
+                let px = x % pw;
+                let base = (py * pw + px) * 3;
                 let mut rgb = [0.0_f32; 3];
                 for c in 0..3 {
+                    let n = counts[py * pw + px][c] as usize;
                     let mut sum = 0.0_f32;
                     let mut cnt = 0.0_f32;
-                    for dy in -1..=1 {
-                        let yy = y as i64 + dy;
+                    for &(dx, dy) in &offsets[base + c][..n] {
+                        let yy = y as i64 + dy as i64;
+                        let xx = x as i64 + dx as i64;
                         if yy < 0 || yy >= height as i64 {
                             continue;
                         }
-                        for dx in -1..=1 {
-                            let xx = x as i64 + dx;
-                            if xx < 0 || xx >= width as i64 {
-                                continue;
-                            }
-                            if cfa.color_at(yy as usize, xx as usize) == c {
-                                sum += bayer[yy as usize * width + xx as usize] as f32;
-                                cnt += 1.0;
-                            }
+                        if xx < 0 || xx >= width as i64 {
+                            continue;
                         }
+                        sum += bayer[yy as usize * width + xx as usize] as f32;
+                        cnt += 1.0;
                     }
                     rgb[c] = if cnt > 0.0 {
                         let v = (sum / cnt - lo[c]) / span[c];

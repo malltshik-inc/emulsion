@@ -1,6 +1,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
+mod crop_math;
 mod export;
 mod histogram;
 mod library;
