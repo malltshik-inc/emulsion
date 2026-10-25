@@ -7,6 +7,7 @@ use egui::{Color32, FontFamily, FontId, Stroke, TextStyle, vec2};
 
 pub(crate) const THUMB_EDGE: usize = 96;
 pub(crate) const THUMB_DECODE_EDGE: usize = THUMB_EDGE * 4;
+pub(crate) const OPEN_FOLDER_HINT: &str = "Open a folder to start";
 pub(crate) const SIDEBAR_WIDTH: f32 = 308.0;
 pub(crate) const TOPBAR_HEIGHT: f32 = 62.0;
 pub(crate) const SETTINGS_HEIGHT: f32 = 70.0;

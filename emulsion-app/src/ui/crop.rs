@@ -1,13 +1,12 @@
 //! Crop overlay, handles, drag maths and aspect/orientation controls.
 
 use eframe::egui;
-use egui::{pos2, vec2, Align, Color32, Layout, Pos2, Rect, RichText, Stroke, StrokeKind};
+use egui::{Align, Color32, Layout, Pos2, Rect, Stroke, StrokeKind, pos2, vec2};
 use emulsion_core::params::{CropRect, PipelineParams};
 
 use crate::app::EmulsionApp;
 use crate::crop_math;
 use crate::model::{CropAspect, CropDrag, Orientation};
-use crate::theme::DIM;
 
 impl EmulsionApp {
     pub(crate) fn crop_to_screen(&self, cr: CropRect, frame: Rect) -> Rect {
@@ -340,16 +339,7 @@ impl EmulsionApp {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let reset = ui
-                        .add(
-                            egui::Button::new(RichText::new("\u{21ba}").size(15.0).color(DIM))
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::NONE)
-                                .corner_radius(6.0)
-                                .min_size(vec2(28.0, 28.0)),
-                        )
-                        .on_hover_text("Reset crop");
-                    if reset.clicked() {
+                    if crate::util::reset_icon_button(ui, "Reset crop") {
                         params.crop = None;
                         self.crop_rect = None;
                         self.crop_drag = CropDrag::None;

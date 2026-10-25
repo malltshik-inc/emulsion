@@ -2,8 +2,8 @@
 
 use eframe::egui;
 use egui::{
-    pos2, vec2, Align, Align2, Color32, FontId, Layout, Margin, Pos2, Rect, RichText, Sense,
-    Stroke, StrokeKind,
+    Align, Align2, Color32, FontId, Layout, Margin, Pos2, Rect, RichText, Sense, Stroke,
+    StrokeKind, pos2, vec2,
 };
 
 use crate::app::EmulsionApp;
@@ -69,10 +69,7 @@ impl EmulsionApp {
                 ui.add_space(10.0);
 
                 let (mp, aspect) = match self.current_size() {
-                    Some((w, h)) => (
-                        format!("{:.1}", w as f64 * h as f64 / 1_000_000.0),
-                        aspect_label(w, h),
-                    ),
+                    Some((w, h)) => (crate::util::megapixels(w, h), aspect_label(w, h)),
                     None => (String::from("—"), String::from("—")),
                 };
                 ui.columns(3, |cols| {

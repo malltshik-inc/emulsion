@@ -12,7 +12,7 @@ use emulsion_core::params::{CropRect, PipelineParams};
 
 use crate::histogram::Histogram;
 use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool, TreeNode};
-use crate::theme::{install_fonts, install_style, load_logo};
+use crate::theme::{OPEN_FOLDER_HINT, install_fonts, install_style, load_logo};
 
 pub(crate) struct EmulsionApp {
     pub(crate) files: Vec<String>,
@@ -123,7 +123,7 @@ impl EmulsionApp {
             histogram: None,
             logo,
             wordmark_family,
-            status: String::from("Open a folder to start"),
+            status: String::from(OPEN_FOLDER_HINT),
             toast: None,
             dirty: true,
             clipboard: None,

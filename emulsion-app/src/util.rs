@@ -1,7 +1,7 @@
 //! Small path, label and geometry helpers.
 
 use eframe::egui;
-use egui::{Pos2, Rect, Vec2, pos2};
+use egui::{Pos2, Rect, Vec2, pos2, vec2};
 
 pub(crate) fn file_name(path: &str) -> String {
     match std::path::Path::new(path).file_name() {
@@ -22,6 +22,48 @@ pub(crate) fn file_extension(path: &str) -> String {
         .extension()
         .map(|s| s.to_string_lossy().to_uppercase())
         .unwrap_or_else(|| String::from("IMAGE"))
+}
+
+/// Megapixels to one decimal ("24.3").
+pub(crate) fn megapixels(w: usize, h: usize) -> String {
+    format!("{:.1}", w as f64 * h as f64 / 1_000_000.0)
+}
+
+/// A small transparent "reset" icon button; returns true when clicked.
+pub(crate) fn reset_icon_button(ui: &mut egui::Ui, hover: &str) -> bool {
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new("\u{21ba}")
+                .size(15.0)
+                .color(crate::theme::DIM),
+        )
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(6.0)
+        .min_size(vec2(28.0, 28.0)),
+    )
+    .on_hover_text(hover)
+    .clicked()
+}
+
+/// The 52x28 outlined toggle used by the rotate/develop rows: transparent and
+/// muted when inactive, accent-tinted when active.
+pub(crate) fn small_toggle_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(label)
+                .size(12.0)
+                .color(crate::theme::MUTED),
+        )
+        .fill(if active {
+            crate::theme::ACCENT_SOFT
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .stroke(egui::Stroke::new(1.0, crate::theme::LINE))
+        .corner_radius(6.0)
+        .min_size(vec2(52.0, 28.0)),
+    )
 }
 
 pub(crate) fn aspect_label(w: usize, h: usize) -> String {

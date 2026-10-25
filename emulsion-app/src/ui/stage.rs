@@ -5,14 +5,10 @@ use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, pos2,
 
 use crate::app::EmulsionApp;
 use crate::model::{CropDrag, Tool};
-use crate::theme::{ACCENT, DIM, LINE, LINE_STRONG, MUTED, STAGE_IN, STAGE_OUT};
+use crate::theme::{ACCENT, DIM, LINE, LINE_STRONG, MUTED, OPEN_FOLDER_HINT, STAGE_IN, STAGE_OUT};
 
 impl EmulsionApp {
     pub(crate) fn stage(&mut self, ui: &mut egui::Ui) {
-        if ui.input(|i| i.key_pressed(egui::Key::Space)) && !ui.ctx().egui_wants_keyboard_input() {
-            self.pan = egui::Vec2::ZERO;
-        }
-
         let (response, painter) =
             ui.allocate_painter(ui.available_size_before_wrap(), Sense::click_and_drag());
         let rect = response.rect;
@@ -30,7 +26,7 @@ impl EmulsionApp {
                 painter.text(
                     rect.center(),
                     Align2::CENTER_CENTER,
-                    "Open a folder to start",
+                    OPEN_FOLDER_HINT,
                     FontId::proportional(18.0),
                     MUTED,
                 );

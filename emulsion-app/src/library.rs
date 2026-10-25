@@ -358,16 +358,9 @@ impl EmulsionApp {
         let Some(path) = self.files.get(index) else {
             return String::from("OPEN A FOLDER");
         };
-        let extension = std::path::Path::new(path)
-            .extension()
-            .map(|value| value.to_string_lossy().to_uppercase())
-            .unwrap_or_else(|| String::from("IMAGE"));
+        let extension = crate::util::file_extension(path);
         match self.current_size() {
-            Some((w, h)) => format!(
-                "{} · {:.1} MP",
-                extension,
-                w as f64 * h as f64 / 1_000_000.0
-            ),
+            Some((w, h)) => format!("{} · {} MP", extension, crate::util::megapixels(w, h)),
             None => extension,
         }
     }

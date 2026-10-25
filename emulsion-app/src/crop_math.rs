@@ -2,7 +2,7 @@
 //! Kept free of egui widgets so the drag/resize rules can be unit-tested.
 
 use eframe::egui;
-use egui::{pos2, Pos2, Rect, Vec2};
+use egui::{Pos2, Rect, Vec2, pos2};
 use emulsion_core::params::CropRect;
 
 use crate::model::CropDrag;

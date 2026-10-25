@@ -53,7 +53,7 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 ## 6. Structure — app
 
 - [x] extract pure crop drag/resize math out of `ui/crop.rs` (+ tests → `crop_math.rs`)
-- [ ] dedupe ghost-reset / outline-button builders across settings/film/crop
-- [ ] dedupe MP computation; `library.rs` uses `util::file_extension`
-- [ ] dedupe "Open a folder to start" string
-- [ ] `stage.rs`: single Space-recenter path
+- [x] dedupe ghost-reset / outline-button builders across settings/film/crop (`util::reset_icon_button`, `util::small_toggle_button`)
+- [x] dedupe MP computation; `library.rs` uses `util::file_extension` (`util::megapixels`)
+- [x] dedupe "Open a folder to start" string (`theme::OPEN_FOLDER_HINT`)
+- [x] `stage.rs`: single Space-recenter path
