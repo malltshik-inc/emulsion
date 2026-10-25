@@ -836,11 +836,13 @@ fn decode_thumbnail_resizes_regular_image() {
     assert_eq!(thumb.image.width, 50);
     assert_eq!(thumb.image.height, 25);
     assert_eq!(thumb.image.data.len(), 50 * 25 * 3);
-    assert!(thumb
-        .image
-        .data
-        .iter()
-        .all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+    assert!(
+        thumb
+            .image
+            .data
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+    );
 
     std::fs::remove_file(&path).ok();
 }
@@ -902,10 +904,11 @@ fn decode_regular_and_process_roundtrip() {
 
     let base = decode(s).unwrap();
     assert_eq!((base.width, base.height), (64, 32));
-    assert!(base
-        .data
-        .iter()
-        .all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+    assert!(
+        base.data
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+    );
 
     let out = crate::process(s, &PipelineParams::default()).unwrap();
     assert_eq!((out.width, out.height), (64, 32));

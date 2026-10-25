@@ -1,7 +1,7 @@
 //! Small path, label and geometry helpers.
 
 use eframe::egui;
-use egui::{pos2, Pos2, Rect, Vec2};
+use egui::{Pos2, Rect, Vec2, pos2};
 
 pub(crate) fn file_name(path: &str) -> String {
     match std::path::Path::new(path).file_name() {

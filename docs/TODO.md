@@ -39,7 +39,7 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 
 - [x] `develop` / invert path: reuse a buffer instead of cloning the whole f32 base per call (`develop_into`, app holds scratch buffers)
 - [x] `invert_negative`: replace per-pixel `powf` with an sRGB LUT (shared `transfer` module)
-- [ ] `demosaic_bilinear`: precompute per-phase neighbor masks, drop the per-pixel `color_at`
+- [x] `demosaic_bilinear`: precompute per-phase neighbor masks, drop the per-pixel `color_at`
 - [x] `apply_black_point`: hoist per-channel constants out of the loop
 - [x] `film::lut`: keep the lock across decode (no duplicate concurrent decodes)
 - [x] share `srgb_encode`/`srgb_decode` + the RGBA→linear loop between `decode.rs` and `tonemap.rs` (`transfer.rs`)

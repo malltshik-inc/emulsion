@@ -1,7 +1,7 @@
 //! RGB histogram calculation and painting.
 
 use eframe::egui;
-use egui::{pos2, vec2, Color32, Rect, Sense, Stroke};
+use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
 
 #[derive(Clone)]
 pub(crate) struct Histogram {
