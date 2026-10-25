@@ -15,16 +15,6 @@ const SRGB_GAIN: f32 = 1.055;
 const SRGB_OFFSET: f32 = 0.055;
 const SRGB_GAMMA: f32 = 2.4;
 
-// Baseline for the negative -> positive conversion. A neutral scan converted
-// with these offsets is the tuned "good" default; without them the result is
-// too dark and too pale. The UI sliders remain offsets on top of this baseline
-// (a slider at 0 means "baseline", not "none"), so the positive path and the
-// per-image patches are unchanged.
-const CONVERSION_BASELINE_EV: f32 = 1.4;
-const CONVERSION_BASELINE_WB: f32 = 70.0;
-const CONVERSION_BASELINE_CONTRAST: f32 = 40.0;
-const CONVERSION_BASELINE_SATURATION: f32 = 20.0;
-
 fn srgb_encode(v: f32) -> f32 {
     if v <= SRGB_CROSSOVER {
         v * LINEAR_GAIN
@@ -134,8 +124,10 @@ fn tonemap_and_quantize_look(
 /// negative's orange mask). Exposure is applied *after* inversion so +EV
 /// brightens the displayed positive rather than darkening it.
 ///
-/// The invert path adds the conversion baseline (EV, WB, contrast, saturation)
-/// on top of the slider values, so a neutral scan converts to a good default.
+/// When Develop (invert) is on, the `invert_sensitivity` slider simultaneously raises
+/// exposure, contrast and saturation on top of the per-slider values. The
+/// invert_sensitivity slider only affects the inverted path; positive (non-inverted)
+/// images are untouched by it.
 pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     let gains = wb_gains(params.wb_temperature, params.wb_tint);
     let mut working = base.clone();
@@ -165,14 +157,12 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     let film = params.film.and_then(|id| film::lut(id).ok());
     let mut out = RgbaImage::new(img.width, img.height);
     if params.invert {
-        let conversion_gains = wb_gains(
-            params.wb_temperature + CONVERSION_BASELINE_WB,
-            params.wb_tint,
-        );
+        let conversion_gains = wb_gains(params.wb_temperature, params.wb_tint);
+        let exposure_ev = params.exposure + params.invert_sensitivity * 0.014;
         invert_negative(
             &img,
             &conversion_gains,
-            params.exposure + CONVERSION_BASELINE_EV,
+            exposure_ev,
             params,
             film.as_deref(),
             &mut out,
@@ -195,7 +185,7 @@ pub fn develop(base: &LinearImage, params: &PipelineParams) -> RgbaImage {
     out
 }
 
-/// Negative -> positive output: invert in the sRGB-encoded (perceptual)
+/// Negative -> positive invert_sensitivity: invert in the sRGB-encoded (perceptual)
 /// domain, then apply WB gains and exposure in linear light.
 ///
 /// A negative's transmittance is roughly `10^-density`, so inverting the
@@ -212,6 +202,8 @@ fn invert_negative(
     out: &mut RgbaImage,
 ) {
     let exposure = 2.0_f32.powf(exposure_ev);
+    let contrast = params.contrast + params.invert_sensitivity * 0.4;
+    let saturation = params.saturation + params.invert_sensitivity * 0.2;
     let src = &img.data;
     out.data
         .par_chunks_exact_mut(4)
@@ -227,8 +219,8 @@ fn invert_negative(
             }
             let mut rgb = apply_look(
                 encoded,
-                params.contrast + CONVERSION_BASELINE_CONTRAST,
-                params.saturation + CONVERSION_BASELINE_SATURATION,
+                contrast,
+                saturation,
                 params.shadows,
                 params.highlights,
             );

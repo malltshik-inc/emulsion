@@ -35,19 +35,18 @@ off shows a readable negative (pavement and people visible, no white clipping)
 and toggling back reproduces the exact same positive; an ordinary positive scan
 (e.g. JPEG) is unchanged; unit tests cover the round trip.
 
-## 2. DONE: Develop baseline
+## 2. DONE: Develop baseline replaced by Output slider
 
-The negative→positive conversion now adds a fixed baseline on top of the sliders
-(exposure +1.4 EV, WB temperature +70, contrast +40, saturation +20) so a neutral
-scan converts to a usable positive on the first Develop click instead of a dark,
-pale one. Chosen over a visible preset (which would set the slider values when
-Develop is enabled) because the sliders then stay at 0 = baseline and the
-positive (non-inverted) path is untouched. Covered by
-`develop_defaults_apply_conversion_baseline`; see PRODUCT §7 and ARCH §3.
+The fixed conversion baseline (EV +1.4, WB +70, contrast +40, saturation +20)
+has been removed and replaced by an Output slider (PipelineParams `output`,
+range −100..+100, default 0) that simultaneously raises exposure, contrast and
+saturation on the inverted (Develop) path only. Positive (non-inverted)
+images are untouched by it. Covered by `develop_output_boosts_negative_only`;
+see PRODUCT §7 and ARCH §3.
 
 **Still open:** auto exposure from the inverted luma distribution for very
-thin/under-exposed negatives (the baseline is fixed, not adaptive), and a
-suggested WB beyond the fixed +70.
+thin/under-exposed negatives (output is manual, not adaptive), and a
+suggested WB starting point beyond the user's slider.
 
 **Reference:** a Gemini post-mortem the owner supplied emphasises film-base /
 percentile normalization (we already do this in `robust_bounds`), logarithmic

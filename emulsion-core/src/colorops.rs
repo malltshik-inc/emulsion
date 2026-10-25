@@ -6,13 +6,9 @@ use crate::image::LinearImage;
 /// Range -100..100 each; 0 = neutral (gain 1.0). Positive temperature is
 /// warmer (more red, less blue); positive tint is magenta.
 pub fn wb_gains(temperature: f32, tint: f32) -> [f32; 3] {
-    let t = (temperature / 100.0).clamp(-1.0, 1.0);
-    let m = (tint / 100.0).clamp(-1.0, 1.0);
-    [
-        1.0 + 0.30 * t + 0.15 * m,
-        1.0 - 0.15 * m,
-        1.0 - 0.30 * t + 0.15 * m,
-    ]
+    let t = (temperature / 100.0).clamp(-1.0, 1.0) * 0.60;
+    let m = (tint / 100.0).clamp(-1.0, 1.0) * 0.15;
+    [1.0 + t + m, 1.0 - m, 1.0 - t + m]
 }
 
 /// Apply per-channel gains to a linear image, in place.
