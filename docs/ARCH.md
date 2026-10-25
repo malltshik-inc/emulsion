@@ -84,15 +84,15 @@ method in its own `ui/` file.
 | module | responsibility |
 |---|---|
 | `main.rs` | crate attributes, module wiring, `eframe::run_native` |
-| `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste |
+| `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste (+ Ctrl/Cmd+C/V on the selected file) |
 | `theme.rs` | palette + layout constants, bundled fonts, egui style, logo/window icon |
 | `model.rs` | `Tool`, `CropAspect`, `Orientation`, `CropDrag`, decoded-image structs (`Loaded`, `ThumbData`) |
 | `library.rs` | folder scan (tree), file selection + settings, background decode, on-demand thumbnail worker |
 | `preview.rs` | preview/thumbnail texture sync from `develop` |
 | `histogram.rs` | histogram computation + painting |
 | `export.rs` | export dialog, single/all-edited export |
-| `ui/top_bar.rs` | brand bar, file meta, Reset/Copy/Paste/Export buttons |
-| `ui/sidebar.rs` | library tree (folder rows + file rows), histogram/stats footer |
+| `ui/top_bar.rs` | brand bar, file meta, Reset/Export buttons (Copy/Paste live in the sidebar row's right-click menu) |
+| `ui/sidebar.rs` | library tree (folder rows + file rows) with a right-click Copy/Paste settings menu acting on the clicked row's own per-file settings (live params when it is the current file); histogram/stats footer |
 | `ui/settings.rs` | tool search + tab strip, expanded slider/rotate/develop panel |
 | `ui/film.rs` | film simulation search, strip, lazily generated cards/previews |
 | `ui/stage.rs` | canvas paint, zoom/pan, loading state, background gradient |
@@ -363,14 +363,36 @@ None of this is wired into the UI yet (see 8).
     expanded folders (the "nested thumbnails don't load" bug; root still worked only
     because `refresh_thumbnails` bypassed the filter). Check the inner slot with
     `is_some_and(Option::is_none)` (see `indices_to_load` in `library.rs`, regression-tested).
+12. **egui-winit swallows Ctrl/Cmd+C/V by default.** With
+    `clipboard_shortcuts` on (the default), those presses become `Event::Copy` /
+    `Event::Paste` and the raw `Event::Key` never reaches the app — so
+    `key_pressed(Key::C)` is never true. Worse, `Event::Paste` is only injected
+    when the **OS** clipboard has text, so it can't drive an in-app clipboard.
+    Emulsion therefore sets `NativeOptions::clipboard_shortcuts = false` and binds
+    the raw command-keys itself (`command_keys` in `app.rs`, regression-tested);
+    a focused `TextEdit` gets `Event::Copy`/`Cut` re-forged from those keys before
+    the panels (Ctrl+V *into* a text field is the one lost casualty).
+13. **`texture_size` must be the *developed* output's aspect at a fixed scale.**
+    `stage` fits/paints the texture to `texture_size`'s aspect
+    (`maintain_aspect_ratio(false)`), so a mismatch stretches the image. The old
+    derivation `base_w/base_h` (+ a manual `rotate_90` swap) ignored `params.crop`,
+    so a narrow crop was stretched wide on the canvas while the exported file
+    stayed correct. Since `develop` already applies crop → rotate → fine-angle →
+    flip, `sync_texture` normalizes `out.width/height` to the downscaled base's
+    longest edge — keeping `texture_size` *identical* between a draft (1600) and a
+    crisp (2000) render, so the canvas geometry (fit/zoom) never jumps when a
+    slider drag swaps resolutions. Pinned by
+    `develop_output_dims_follow_crop_and_rotation` in core.
 
 ### Limitations (known, mostly deferred by PRODUCT.md)
 
 1. **Memory**: f32 linear base + RGBA output at 64MP peaks ≈ 1 GB (f32 772 MB +
    RGBA 257 MB + bayer 129 MB transients). No streaming / tiling. PRODUCT.md targets
    24 MP comfortable / 64 MP headroom — this is that headroom being expensive.
-2. **Preview is downscaled to ≤1800 px** so sliders are instant; export re-develops
-   the full-res source. There is no full-res "100% pixel peep" view yet.
+2. **Preview is downscaled to ≤2000 px** (`base_small`) so sliders are instant;
+   while a button is held the canvas renders from `base_draft` (≤1600 px) to cut
+   drag cost further, then crisps up on release. Export re-develops the full-res
+   source. There is no full-res "100% pixel peep" view yet.
 3. **Export re-decodes + re-develops the source from scratch.** The app does not keep
    the full-res base in memory between preview and export (deliberate trade, see 1).
    For multiple exports of the same image this repeats decoding work. Each export

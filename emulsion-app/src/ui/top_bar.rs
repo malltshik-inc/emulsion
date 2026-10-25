@@ -1,9 +1,7 @@
 //! Top bar: branding, current file metadata and edit/export actions.
 
 use eframe::egui;
-use egui::{
-    Align2, Color32, FontFamily, FontId, Rect, RichText, Stroke, StrokeKind, Vec2, pos2, vec2,
-};
+use egui::{Align2, Color32, FontFamily, FontId, Rect, RichText, Stroke, StrokeKind, pos2, vec2};
 
 use crate::app::EmulsionApp;
 use crate::theme::{ACCENT, ACCENT_SOFT, DIM, LINE, LINE_STRONG, MUTED, TEXT};
@@ -97,16 +95,8 @@ impl EmulsionApp {
                 pos2(rect.right() - 16.0 - 98.0, center_y - 16.0),
                 vec2(98.0, 32.0),
             );
-            let paste_rect = Rect::from_min_size(
-                pos2(export_rect.left() - 8.0 - 66.0, center_y - 16.0),
-                vec2(66.0, 32.0),
-            );
-            let copy_rect = Rect::from_min_size(
-                pos2(paste_rect.left() - 8.0 - 66.0, center_y - 16.0),
-                vec2(66.0, 32.0),
-            );
             let reset_rect = Rect::from_min_size(
-                pos2(copy_rect.left() - 8.0 - 66.0, center_y - 16.0),
+                pos2(export_rect.left() - 8.0 - 66.0, center_y - 16.0),
                 vec2(66.0, 32.0),
             );
 
@@ -120,34 +110,6 @@ impl EmulsionApp {
             );
             if reset.clicked() {
                 self.reset_all();
-            }
-
-            let small_button = |label: &str, size: Vec2| {
-                egui::Button::new(RichText::new(label).size(13.0).color(MUTED))
-                    .fill(Color32::TRANSPARENT)
-                    .stroke(Stroke::new(1.0, LINE))
-                    .corner_radius(8.0)
-                    .min_size(size)
-            };
-            let copy_enabled = self.is_current_edited();
-            if ui
-                .add_enabled_ui(copy_enabled, |ui| {
-                    ui.put(copy_rect, small_button("Copy", copy_rect.size()))
-                })
-                .inner
-                .clicked()
-            {
-                self.copy_settings();
-            }
-            let paste_enabled = self.clipboard.is_some();
-            if ui
-                .add_enabled_ui(paste_enabled, |ui| {
-                    ui.put(paste_rect, small_button("Paste", paste_rect.size()))
-                })
-                .inner
-                .clicked()
-            {
-                self.paste_settings();
             }
 
             painter.rect_filled(

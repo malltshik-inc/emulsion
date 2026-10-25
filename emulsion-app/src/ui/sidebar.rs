@@ -8,9 +8,17 @@ use egui::{
 
 use crate::app::EmulsionApp;
 use crate::histogram::paint_histogram;
-use crate::model::TreeNode;
+use crate::model::{RowAction, TreeNode};
 use crate::theme::{ACCENT, ACCENT_LINE, ACCENT_SOFT, DIM, HOVER, LINE, MUTED, TEXT};
 use crate::util::{aspect_label, cover_uv, file_extension, file_name};
+
+/// Widget feedback collected during the immutable tree render, applied after.
+#[derive(Default)]
+struct TreeEvents {
+    clicked: Option<usize>,
+    toggles: Vec<String>,
+    action: Option<(RowAction, usize)>,
+}
 
 impl EmulsionApp {
     pub(crate) fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -106,29 +114,26 @@ impl EmulsionApp {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let viewport = ui.available_width();
-                            let mut clicked: Option<usize> = None;
-                            let mut toggles: Vec<String> = Vec::new();
-                            self.render_tree(
-                                ui,
-                                &self.tree,
-                                0,
-                                viewport,
-                                &mut clicked,
-                                &mut toggles,
-                            );
+                            let mut events = TreeEvents::default();
+                            self.render_tree(ui, &self.tree, 0, viewport, &mut events);
                             // Only a real folder toggle changes which leaves are
                             // visible; re-scheduling on every frame would cancel the
                             // decode worker before it could finish slow RAWs.
-                            if !toggles.is_empty() {
-                                for path in toggles {
+                            if !events.toggles.is_empty() {
+                                for path in events.toggles {
                                     if !self.expanded.remove(&path) {
                                         self.expanded.insert(path);
                                     }
                                 }
                                 self.schedule_visible_thumbnails();
                             }
-                            if let Some(i) = clicked {
+                            if let Some(i) = events.clicked {
                                 self.select_file(i);
+                            }
+                            match events.action {
+                                Some((RowAction::Copy, index)) => self.copy_settings_from(index),
+                                Some((RowAction::Paste, index)) => self.paste_settings_to(index),
+                                None => {}
                             }
                         });
                 },
@@ -146,21 +151,20 @@ impl EmulsionApp {
         nodes: &[TreeNode],
         depth: usize,
         viewport: f32,
-        clicked: &mut Option<usize>,
-        toggles: &mut Vec<String>,
+        events: &mut TreeEvents,
     ) {
         for node in nodes {
             if let Some(index) = node.file_index {
-                if self.file_row(ui, index, depth, viewport) {
-                    *clicked = Some(index);
+                if self.file_row(ui, index, depth, viewport, events) {
+                    events.clicked = Some(index);
                 }
             } else {
                 let is_open = self.expanded.contains(&node.path);
                 if self.folder_row(ui, node, is_open, depth, viewport) {
-                    toggles.push(node.path.clone());
+                    events.toggles.push(node.path.clone());
                 }
                 if is_open {
-                    self.render_tree(ui, &node.children, depth + 1, viewport, clicked, toggles);
+                    self.render_tree(ui, &node.children, depth + 1, viewport, events);
                 }
             }
         }
@@ -213,7 +217,14 @@ impl EmulsionApp {
         response.on_hover_text(node.path.as_str()).clicked()
     }
 
-    fn file_row(&self, ui: &mut egui::Ui, index: usize, depth: usize, viewport: f32) -> bool {
+    fn file_row(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        depth: usize,
+        viewport: f32,
+        events: &mut TreeEvents,
+    ) -> bool {
         let indent = 8.0 + depth as f32 * 16.0;
         let name = file_name(&self.files[index]);
         let name_w = ui.ctx().fonts_mut(|fonts| {
@@ -306,7 +317,30 @@ impl EmulsionApp {
             );
         }
 
-        response.on_hover_text(self.files[index].as_str()).clicked()
+        let resp = response.on_hover_text(self.files[index].as_str());
+        resp.context_menu(|ui| {
+            ui.set_min_width(150.0);
+            // Copy only what is actually there — an untouched file has nothing.
+            if ui
+                .add_enabled(
+                    self.is_edited_at(index),
+                    egui::Button::new("Copy settings").shortcut_text("Ctrl/Cmd+C"),
+                )
+                .clicked()
+            {
+                events.action = Some((RowAction::Copy, index));
+            }
+            if ui
+                .add_enabled(
+                    self.clipboard.is_some(),
+                    egui::Button::new("Paste settings").shortcut_text("Ctrl/Cmd+V"),
+                )
+                .clicked()
+            {
+                events.action = Some((RowAction::Paste, index));
+            }
+        });
+        resp.clicked()
     }
 }
 

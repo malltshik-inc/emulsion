@@ -20,6 +20,10 @@ fn main() {
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([1000.0, 680.0])
             .with_icon(theme::window_icon()),
+        // egui-winit otherwise swallows Ctrl/Cmd+C/V into Event::Copy/Paste
+        // (and Event::Paste only fires when the *OS* clipboard holds text),
+        // so our settings copy/paste hotkeys would never see the keys.
+        clipboard_shortcuts: false,
         ..Default::default()
     };
     let _ = eframe::run_native(

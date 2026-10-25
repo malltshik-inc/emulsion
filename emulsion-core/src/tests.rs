@@ -11,7 +11,7 @@ use crate::{
     film::{self, Category, HaldLut},
     geometry::{crop, downscale, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
-    params::PipelineParams,
+    params::{CropRect, PipelineParams},
     tonemap::{develop, tonemap_and_quantize},
 };
 
@@ -853,4 +853,39 @@ fn decode_thumbnail_resizes_regular_image() {
     );
 
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn develop_output_dims_follow_crop_and_rotation() {
+    // The preview's `texture_size` must equal the *developed* output's aspect;
+    // deriving it from base dims (base + rotate swap) made a cropped preview
+    // stretch to the uncropped aspect while the export stayed correct.
+    let img = make_img(200, 100, 0.5);
+
+    // 200x100 -> rotate 90° -> 100x200, then crop to half.
+    let rotated = PipelineParams {
+        rotate_90: 1,
+        crop: Some(CropRect {
+            x: 0.25,
+            y: 0.25,
+            width: 0.5,
+            height: 0.5,
+        }),
+        ..PipelineParams::default()
+    };
+    let out = develop(&img, &rotated);
+    assert_eq!((out.width, out.height), (50, 100));
+
+    // A narrow crop must stay narrow in the output (the reported stretch bug).
+    let narrow = PipelineParams {
+        crop: Some(CropRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.05,
+            height: 1.0,
+        }),
+        ..PipelineParams::default()
+    };
+    let out = develop(&img, &narrow);
+    assert_eq!((out.width, out.height), (10, 100));
 }

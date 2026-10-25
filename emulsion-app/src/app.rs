@@ -139,27 +139,104 @@ impl EmulsionApp {
         self.show_toast("Edits reset");
     }
 
-    pub(crate) fn copy_settings(&mut self) {
-        self.clipboard = Some(self.params);
+    /// Copy the settings of the file at `index` (its live params if it is the
+    /// current file, else its stored params) — the row that was right-clicked.
+    pub(crate) fn copy_settings_from(&mut self, index: usize) {
+        let Some(path) = self.files.get(index) else {
+            return;
+        };
+        if self.cursor == Some(index) {
+            self.clipboard = Some(self.params);
+        } else {
+            self.clipboard = Some(self.settings.get(path).copied().unwrap_or_default());
+        }
         self.show_toast("Settings copied");
     }
 
-    pub(crate) fn paste_settings(&mut self) {
-        if let Some(p) = self.clipboard {
+    /// Paste the clipboard into the file at `index`. The current file is edited
+    /// live; any other file just gets its stored params (+ a re-rendered row).
+    pub(crate) fn paste_settings_to(&mut self, index: usize) {
+        let Some(p) = self.clipboard else { return };
+        if self.cursor == Some(index) {
             self.params = p;
             self.crop_rect = p.crop;
             self.crop_drag = CropDrag::None;
             self.crop_drag_start = None;
             self.crop_drag_rect = None;
             self.dirty = true;
-            self.thumbs_dirty = true;
-            self.show_toast("Settings pasted");
+        } else if let Some(path) = self.files.get(index) {
+            self.settings.insert(path.clone(), p);
+        }
+        self.thumbs_dirty = true;
+        self.show_toast("Settings pasted");
+    }
+
+    /// Copy: command+C / Cut: command+X / Paste: command+V, from raw key events
+    /// (NativeOptions::clipboard_shortcuts is off so egui-winit hands the keys
+    /// through instead of turning them into clipboard events).
+    fn command_keys(events: &[egui::Event]) -> (bool, bool, bool) {
+        let mut keys = (false, false, false);
+        for event in events {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+                && modifiers.command
+            {
+                match key {
+                    egui::Key::C => keys.0 = true,
+                    egui::Key::X => keys.1 = true,
+                    egui::Key::V => keys.2 = true,
+                    _ => {}
+                }
+            }
+        }
+        keys
+    }
+
+    /// Global Ctrl/Cmd+C and Ctrl/Cmd+V act on the selected file (the row
+    /// context menu is the per-row way; the hotkeys have no row to target).
+    /// Must run before the panels: a focused text field needs its native
+    /// clipboard events re-forged from the raw keys so the TextEdit still
+    /// works, and that only matters if the events land before it renders.
+    fn handle_shortcuts(&mut self, ui: &mut egui::Ui) {
+        if self.export_dialog {
+            return;
+        }
+        let (copy, cut, paste) = ui.input(|i| Self::command_keys(&i.events));
+        if !(copy || cut || paste) {
+            return;
+        }
+        if ui.ctx().text_edit_focused() {
+            let mut events = Vec::new();
+            if copy {
+                events.push(egui::Event::Copy);
+            }
+            if cut {
+                events.push(egui::Event::Cut);
+            }
+            // Paste is dropped here: we would need the OS clipboard text and
+            // clipboard_shortcuts=false means egui-winit no longer fetches it.
+            if !events.is_empty() {
+                ui.input_mut(|i| i.events.append(&mut events));
+            }
+            return;
+        }
+        let Some(index) = self.cursor else { return };
+        if copy {
+            self.copy_settings_from(index);
+        }
+        if paste {
+            self.paste_settings_to(index);
         }
     }
 }
 
 impl eframe::App for EmulsionApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_shortcuts(ui);
         self.poll_load();
         self.poll_thumbnails();
         if self.thumb_rx.is_some() || self.load_rx.is_some() {
@@ -216,5 +293,73 @@ impl eframe::App for EmulsionApp {
 
         self.paint_toast(ui);
         self.export_modal(ui);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EmulsionApp;
+    use eframe::egui;
+
+    fn key(key: egui::Key, command: bool) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: if command {
+                egui::Modifiers::COMMAND
+            } else {
+                egui::Modifiers::NONE
+            },
+        }
+    }
+
+    #[test]
+    fn command_keys_detect_copy_cut_paste() {
+        assert_eq!(
+            EmulsionApp::command_keys(&[key(egui::Key::C, true)]),
+            (true, false, false)
+        );
+        assert_eq!(
+            EmulsionApp::command_keys(&[key(egui::Key::X, true)]),
+            (false, true, false)
+        );
+        assert_eq!(
+            EmulsionApp::command_keys(&[key(egui::Key::V, true)]),
+            (false, false, true)
+        );
+        assert_eq!(
+            EmulsionApp::command_keys(&[key(egui::Key::C, false)]),
+            (false, false, false)
+        );
+        assert_eq!(
+            EmulsionApp::command_keys(&[key(egui::Key::C, true), key(egui::Key::V, true)]),
+            (true, false, true)
+        );
+        // Presses only: a release must not count.
+        let release = egui::Event::Key {
+            key: egui::Key::C,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        assert_eq!(EmulsionApp::command_keys(&[release]), (false, false, false));
+    }
+
+    #[test]
+    fn command_keys_ignore_clipboard_events() {
+        // With egui-winit's clipboard_shortcuts enabled these would be all we
+        // ever see — and they must NOT satisfy the key hotkeys (that reliance
+        // is why NativeOptions.clipboard_shortcuts is set to false).
+        assert_eq!(
+            EmulsionApp::command_keys(&[egui::Event::Copy]),
+            (false, false, false)
+        );
+        assert_eq!(
+            EmulsionApp::command_keys(&[egui::Event::Paste("x".into())]),
+            (false, false, false)
+        );
     }
 }

@@ -220,6 +220,13 @@ pub(crate) struct TreeNode {
     pub(crate) file_index: Option<usize>,
 }
 
+/// Context-menu action on a file row, applied after the immutable render pass.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowAction {
+    Copy,
+    Paste,
+}
+
 pub(crate) type ThumbMessage = (u64, Option<ThumbData>);
 
 #[cfg(test)]

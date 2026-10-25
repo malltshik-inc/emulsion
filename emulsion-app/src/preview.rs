@@ -82,17 +82,17 @@ impl EmulsionApp {
                 self.texture = Some(handle);
             }
         }
-        let (base_w, base_h) = (
-            loaded.base_small.width as f32,
-            loaded.base_small.height as f32,
-        );
-        let size_swapped = !self.params.rotate_90.is_multiple_of(2);
-
-        self.texture_size = Some(if size_swapped {
-            vec2(base_h, base_w)
-        } else {
-            vec2(base_w, base_h)
-        });
+        // The stage fits and stretches the texture to `texture_size`'s aspect, so
+        // it must carry the *developed* output's aspect — `develop` already
+        // applied crop, 90° rotation, fine angle and flip. The dims are
+        // normalized to the downscaled base's longest edge: a draft (1600) and
+        // a crisp (2000) render of the same image must map to the same canvas
+        // geometry, or the picture visibly shrinks while a slider is held and
+        // pops back on release.
+        let longest_ref = loaded.base_small.width.max(loaded.base_small.height) as f32;
+        let longest_out = out.width.max(out.height) as f32;
+        let scale = longest_ref / longest_out;
+        self.texture_size = Some(vec2(out.width as f32 * scale, out.height as f32 * scale));
 
         // If we were dragging, keep self.dirty = true so that the moment the user
         // lets go of the mouse, it immediately triggers one final high-res render!

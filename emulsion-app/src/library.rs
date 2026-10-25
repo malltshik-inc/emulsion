@@ -192,7 +192,7 @@ impl EmulsionApp {
             };
             let source_size = (base.width, base.height);
             let base_small = emulsion_core::geometry::downscale(&base, 2000);
-            let base_draft = emulsion_core::geometry::downscale(&base, 1000);
+            let base_draft = emulsion_core::geometry::downscale(&base, 1600);
             let _ = sender.send(Ok(Loaded {
                 base_small,
                 base_draft,
