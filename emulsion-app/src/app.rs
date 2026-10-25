@@ -31,7 +31,7 @@ pub(crate) struct EmulsionApp {
     pub(crate) thumb_rx: Option<Receiver<ThumbMessage>>,
     pub(crate) thumb_cancel: Option<Arc<AtomicBool>>,
     pub(crate) thumb_generation: u64,
-    pub(crate) thumbs_dirty: bool,
+    pub(crate) thumbs_pending: Vec<usize>,
 
     pub(crate) params: PipelineParams,
     pub(crate) settings: HashMap<String, PipelineParams>,
@@ -97,7 +97,7 @@ impl EmulsionApp {
             thumb_rx: None,
             thumb_cancel: None,
             thumb_generation: 0,
-            thumbs_dirty: false,
+            thumbs_pending: Vec::new(),
             params: PipelineParams::default(),
             settings: HashMap::new(),
             preview_scratch: emulsion_core::image::LinearImage::new(0, 0),
@@ -170,7 +170,7 @@ impl EmulsionApp {
         } else if let Some(path) = self.files.get(index) {
             self.settings.insert(path.clone(), p);
         }
-        self.thumbs_dirty = true;
+        self.thumbs_pending.push(index);
         self.show_toast("Settings pasted");
     }
 
@@ -248,7 +248,7 @@ impl eframe::App for EmulsionApp {
         if self.dirty {
             self.sync_texture(ui);
         }
-        if self.thumbs_dirty {
+        if !self.thumbs_pending.is_empty() {
             self.sync_thumbnails(ui.ctx());
         }
 

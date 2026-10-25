@@ -10,10 +10,11 @@ use crate::model::Tool;
 
 impl EmulsionApp {
     pub(crate) fn sync_thumbnails(&mut self, ctx: &egui::Context) {
-        if !self.thumbs_dirty {
+        if self.thumbs_pending.is_empty() {
             return;
         }
-        for i in 0..self.thumb_bases.len() {
+        let pending = std::mem::take(&mut self.thumbs_pending);
+        for i in pending {
             let params = self.params_for_index(i);
             let Some(base) = &self.thumb_bases[i] else {
                 continue;
@@ -37,7 +38,6 @@ impl EmulsionApp {
                 *slot = Some(params);
             }
         }
-        self.thumbs_dirty = false;
     }
 
     pub(crate) fn sync_texture(&mut self, ui: &mut egui::Ui) {
@@ -107,7 +107,10 @@ impl EmulsionApp {
             ui.ctx().request_repaint();
         } else {
             self.dirty = false;
-            self.thumbs_dirty = true;
+            // The selected row's thumbnail follows the live params.
+            if let Some(i) = self.cursor {
+                self.thumbs_pending.push(i);
+            }
         }
     }
 }

@@ -121,8 +121,8 @@ State held by `EmulsionApp`:
 
 Workflow in `App::ui` each frame:
 1. `poll_load()` / `poll_thumbnails()` — drain the decode channels if done.
-2. `sync_texture()` — if `dirty`, `develop(base_small, params)` → upload RGB(A8) bytes to texture; marks `thumbs_dirty`. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
-3. `sync_thumbnails()` — if `thumbs_dirty`, `develop` and upload only the rows whose params differ from the cached `thumb_params` (the selected row uses the live `params`), so dragging one file's sliders does not rebuild all rows.
+2. `sync_texture()` — if `dirty`, `develop_into(base_small|base_draft, params)` into persistent buffers → upload RGB(A8) bytes to texture; queues the selected row's thumbnail. While the Crop tool is open the preview forces `crop = None` (full frame, so a region can be drawn); otherwise it develops the applied `params.crop`, so the canvas shows only the cropped result.
+3. `sync_thumbnails()` — drains `thumbs_pending` (one index per received thumbnail base or param change) and develops/upload the rows whose params differ from the cached `thumb_params`; no full sweep of the folder.
 4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
    central canvas); each panel calls its own method on `self` (keeps the egui
    closures single-capture).
