@@ -44,6 +44,8 @@ pub(crate) struct EmulsionApp {
     pub(crate) fit_zoom: f32,
     pub(crate) last_stage: Vec2,
     pub(crate) pan: Vec2,
+    // Cached stage backdrop, rebuilt only when the canvas rect changes.
+    pub(crate) stage_bg: Option<(egui::Rect, Vec<egui::Shape>)>,
 
     pub(crate) open_tool: Option<Tool>,
     pub(crate) tool_search: String,
@@ -108,6 +110,7 @@ impl EmulsionApp {
             fit_zoom: 0.0,
             last_stage: Vec2::ZERO,
             pan: Vec2::ZERO,
+            stage_bg: None,
             open_tool: None,
             tool_search: String::new(),
             focus_search: false,

@@ -16,7 +16,14 @@ impl EmulsionApp {
         let (response, painter) =
             ui.allocate_painter(ui.available_size_before_wrap(), Sense::click_and_drag());
         let rect = response.rect;
-        paint_stage_background(&painter, rect);
+        // The backdrop is static for a given canvas rect; rebuild only on change
+        // so per-frame slider drags don't recreate the mesh + dot grid.
+        let bg_changed = self.stage_bg.as_ref().is_none_or(|(r, _)| *r != rect);
+        if bg_changed {
+            self.stage_bg = Some((rect, stage_background_shapes(rect)));
+        }
+        let (_, shapes) = self.stage_bg.as_ref().unwrap();
+        painter.extend(shapes.iter().cloned());
 
         if self.texture.is_none() {
             if self.files.is_empty() {
@@ -196,7 +203,8 @@ fn lerp_color(from: Color32, to: Color32, t: f32) -> Color32 {
     )
 }
 
-fn paint_stage_background(painter: &egui::Painter, rect: Rect) {
+fn stage_background_shapes(rect: Rect) -> Vec<egui::Shape> {
+    let mut shapes = Vec::new();
     let columns = 16;
     let rows = 12;
     let mut mesh = egui::epaint::Mesh::default();
@@ -223,7 +231,7 @@ fn paint_stage_background(painter: &egui::Painter, rect: Rect) {
             mesh.add_triangle(i, i + columns + 2, i + columns + 1);
         }
     }
-    painter.add(egui::Shape::mesh(mesh));
+    shapes.push(egui::Shape::mesh(mesh));
 
     let mut y = rect.top() + 13.0;
     while y < rect.bottom() {
@@ -236,16 +244,17 @@ fn paint_stage_background(painter: &egui::Painter, rect: Rect) {
             let distance = (dx * dx + dy * dy).sqrt() / 0.78;
             let alpha = ((1.0 - distance.clamp(0.0, 1.0)).powf(1.4) * 34.0) as u8;
             if alpha > 1 {
-                painter.circle_filled(
+                shapes.push(egui::Shape::circle_filled(
                     pos2(x, y),
                     0.8,
                     Color32::from_rgba_unmultiplied(56, 44, 28, alpha),
-                );
+                ));
             }
             x += 26.0;
         }
         y += 26.0;
     }
+    shapes
 }
 
 fn paint_loading_line(painter: &egui::Painter, center: Pos2, time: f32) {
