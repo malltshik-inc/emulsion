@@ -391,9 +391,8 @@ None of this is wired into the UI yet (see 8).
 3. **Export re-decodes + re-develops the source from scratch.** The app does not keep
    the full-res base in memory between preview and export (deliberate trade, see 1).
    For multiple exports of the same image this repeats decoding work. Each export
-   also writes `<name>.emulsion.json` (source path + `PipelineParams` + film name);
-   a failed sidecar write is reported in the status line but does not invalidate
-   the image.
+   writes only the image file; the `<name>.emulsion.json` sidecar writer exists in
+   core but is a backlog item (see PRODUCT.md §13), so no sidecar is produced.
 4. **`rotate_fine` extra**: fine angle is bilinear with **white fill** outside the
    source — corners become white. Crop is applied **after** rotation (the last
    geometry op), so the white fill is cropped away: straighten-then-crop is the
@@ -408,6 +407,7 @@ None of this is wired into the UI yet (see 8).
 8. **Not in the UI yet** (core supports the mechanism, UI wiring pending):
    - undo history (params stack)
    - patch-file autosave/restore and presets
+   - `<name>.emulsion.json` sidecar write on export
    - persist last folder / last export settings (OS config JSON, per PRODUCT.md)
 9. **App modules are split by concern.** `main.rs` is only entry wiring; state
    lives in `app.rs` and panels live in `ui/`. Add new UI code to the matching

@@ -191,8 +191,9 @@ Per-file settings are the same value associated with each source path. They live
 in memory for the session (no disk autosave yet); patches/presets are the durable
 form.
 
-Undo (in-memory) is REQUIRED in v1; patch-file autosave/restore and presets are
-REQUIRED mechanisms but may be exposed in the UI later (§13).
+Undo (in-memory history) is a REQUIRED mechanism but its UI is a backlog item
+(§13); patch-file autosave/restore and presets are REQUIRED mechanisms but may be
+exposed in the UI later (§13).
 
 ## 11. Export (MUST)
 
@@ -208,8 +209,8 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
   pre-fills the **source file stem** (e.g. `P6030011.png` for `P6030011.ORF`).
 - MUST never touch the original file.
 - After a successful save, the status line states the result (success and path,
-  or error). The `<name>.emulsion.json` sidecar is **currently disabled** (the
-  code is kept, commented out, for a future re-enable).
+  or error). A `<name>.emulsion.json` sidecar write is a backlog item (§13); the
+  writer exists in `emulsion-core` but the app does not call it yet.
 
 ## 12. Performance (MUST)
 
@@ -226,8 +227,9 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 ## 13. Out of scope / deferred (MAY, not v1 gates)
 
 - Patch-file autosave/restore and preset management in the UI.
+- Undo UI (in-memory history; the mechanism is a params stack).
+- `<name>.emulsion.json` sidecar write on export (writer exists, not wired).
 - Importing user-supplied `.cube`/Hald LUTs (the bundled film strip is v1).
-- Undo UI beyond in-memory history.
 - 100%-zoom pixel peeping view.
 - 16-bit pipeline and TIFF export.
 - Other RAW makes than ORF.
@@ -257,6 +259,5 @@ REQUIRED mechanisms but may be exposed in the UI later (§13).
 - [ ] 90° + fine angle + flip + crop combine correctly and match the export.
 - [ ] Export JPEG (with quality) and PNG at full resolution; original byte-for-byte
       untouched (verified by file hash before/after).
-- [ ] Undo reverts each committed setting change.
 - [ ] Patch and preset files round-trip: save settings, reopen/restore, image renders
       identically.
