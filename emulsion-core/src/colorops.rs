@@ -42,12 +42,3 @@ pub fn apply_black_point(img: &mut LinearImage, bp: &[f32; 3]) {
         }
     });
 }
-
-/// Invert (negative -> positive), in place.
-pub fn invert(img: &mut LinearImage) {
-    img.data.par_chunks_exact_mut(3).for_each(|pix| {
-        pix[0] = 1.0 - pix[0];
-        pix[1] = 1.0 - pix[1];
-        pix[2] = 1.0 - pix[2];
-    });
-}

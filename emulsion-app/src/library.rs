@@ -101,7 +101,6 @@ impl EmulsionApp {
         if let Some(p) = dir {
             let path = p.to_string_lossy().into_owned();
             self.save_current();
-            self.folder = path.clone();
             self.cursor = None;
             self.loaded = None;
             self.texture = None;

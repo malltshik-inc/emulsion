@@ -3,7 +3,7 @@
 use rayon::prelude::*;
 
 use crate::{
-    colorops::{apply_black_point, apply_exposure, apply_wb, invert, wb_gains},
+    colorops::{apply_black_point, apply_exposure, apply_wb, wb_gains},
     decode::{apply_camera_matrix, camera_matrix_to_srgb, is_supported},
     demosaic::demosaic_bilinear,
     demosaic::robust_bounds,
@@ -12,7 +12,7 @@ use crate::{
     geometry::{crop, downscale, flip_horizontal, rotate_90, rotate_fine},
     image::{LinearImage, RgbaImage},
     params::{CropRect, PipelineParams},
-    tonemap::{develop, tonemap_and_quantize},
+    tonemap::develop,
 };
 
 fn make_img(w: usize, h: usize, fill: f32) -> LinearImage {
@@ -85,7 +85,7 @@ fn apply_wb_scales_planes() {
     let mut img = make_img(2, 2, 0.5);
     let gains = &wb_gains(100.0, 0.0);
     apply_wb(&mut img, gains);
-    let (r, g, _) = img.px(0, 0);
+    let (r, g, _) = img.pixel(0, 0);
     assert!(r > g);
 }
 
@@ -93,7 +93,7 @@ fn apply_wb_scales_planes() {
 fn exposure_doubles_at_one_stop() {
     let mut img = make_img(2, 2, 0.25);
     apply_exposure(&mut img, 1.0);
-    let (r, g, b) = img.px(0, 0);
+    let (r, g, b) = img.pixel(0, 0);
     assert!(close(r, 0.5) && close(g, 0.5) && close(b, 0.5));
 }
 
@@ -103,18 +103,10 @@ fn black_point_shifts_but_preserves_white() {
     img.set_px(0, 0, 0.2, 0.2, 0.2);
     img.set_px(0, 1, 1.0, 1.0, 1.0);
     apply_black_point(&mut img, &[0.2, 0.2, 0.2]);
-    let (r1, _, _) = img.px(0, 0);
-    let (r2, _, _) = img.px(0, 1);
+    let (r1, _, _) = img.pixel(0, 0);
+    let (r2, _, _) = img.pixel(0, 1);
     assert!(close(r1, 0.0));
     assert!(close(r2, 1.0));
-}
-
-#[test]
-fn invert_flips() {
-    let mut img = make_img(1, 1, 0.3);
-    invert(&mut img);
-    let (r, g, b) = img.px(0, 0);
-    assert!(close(r, 0.7) && close(g, 0.7) && close(b, 0.7));
 }
 
 #[test]
@@ -140,8 +132,8 @@ fn rotate_90_cw_corners() {
     assert_eq!(r.width, 1);
     assert_eq!(r.height, 2);
     // top = original left = R
-    let (r0, g0, _) = r.px(0, 0);
-    let (r1, g1, _) = r.px(0, 1);
+    let (r0, g0, _) = r.pixel(0, 0);
+    let (r1, g1, _) = r.pixel(0, 1);
     assert!(close(r0, 1.0) && close(g0, 0.0));
     assert!(close(r1, 0.0) && close(g1, 1.0));
 }
@@ -155,8 +147,8 @@ fn rotate_90_ccw_corners() {
     let r = rotate_90(&img, 3); // CCW: right edge -> top
     assert_eq!(r.width, 1);
     assert_eq!(r.height, 2);
-    let (r0, g0, _) = r.px(0, 0);
-    let (r1, g1, _) = r.px(0, 1);
+    let (r0, g0, _) = r.pixel(0, 0);
+    let (r1, g1, _) = r.pixel(0, 1);
     assert!(close(r0, 0.0) && close(g0, 1.0));
     assert!(close(r1, 1.0) && close(g1, 0.0));
 }
@@ -173,8 +165,8 @@ fn rotate_360_is_identity() {
     let r = rotate_90(&img, 4);
     for y in 0..2 {
         for x in 0..3 {
-            let (a, b, c) = r.px(x, y);
-            let (d, e, f) = original.px(x, y);
+            let (a, b, c) = r.pixel(x, y);
+            let (d, e, f) = original.pixel(x, y);
             assert!(close(a, d) && close(b, e) && close(c, f));
         }
     }
@@ -191,8 +183,8 @@ fn rotate_fine_zero_is_identity() {
     let r = rotate_fine(&img, 0.0);
     for y in 0..3 {
         for x in 0..3 {
-            let (a, b, c) = r.px(x, y);
-            let (d, e, f) = img.px(x, y);
+            let (a, b, c) = r.pixel(x, y);
+            let (d, e, f) = img.pixel(x, y);
             assert!(close(a, d) && close(b, e) && close(c, f));
         }
     }
@@ -207,14 +199,14 @@ fn rotate_fine_90_keeps_center_whites_corners() {
         }
     }
     // center pixel (1,1) has value x=1
-    assert!(close(img.px(1, 1).0, 1.0));
+    assert!(close(img.pixel(1, 1).0, 1.0));
     let r = rotate_fine(&img, 90.0);
     // 90 degree rotation around center is exact: center preserved...
     // but bilinear samples near center, so compare loosely.
-    let (rc, _, _) = r.px(1, 1);
+    let (rc, _, _) = r.pixel(1, 1);
     assert!((rc - 1.0).abs() < 0.5);
     // corners sample outside -> white fill (all 1.0)
-    let (r0, g0, b0) = r.px(0, 0);
+    let (r0, g0, b0) = r.pixel(0, 0);
     assert!(r0 > 0.9 && g0 > 0.9 && b0 > 0.9);
 }
 
@@ -225,9 +217,9 @@ fn flip_horizontal_mirrors_columns() {
     img.set_px(1, 0, 0.0, 1.0, 0.0);
     img.set_px(2, 0, 0.0, 0.0, 1.0);
     let f = flip_horizontal(&img);
-    let (r, g, b) = f.px(0, 0);
+    let (r, g, b) = f.pixel(0, 0);
     assert!(close(r, 0.0) && close(g, 0.0) && close(b, 1.0));
-    let (r, g, b) = f.px(2, 0);
+    let (r, g, b) = f.pixel(2, 0);
     assert!(close(r, 1.0) && close(g, 0.0) && close(b, 0.0));
 }
 
@@ -235,8 +227,8 @@ fn flip_horizontal_mirrors_columns() {
 fn tonemap_quantize_produces_rgba() {
     let mut img = LinearImage::new(2, 2);
     img.set_px(0, 0, 0.0, 0.5, 1.0);
-    let mut out = RgbaImage::new(2, 2);
-    tonemap_and_quantize(&img, &mut out);
+    let out = develop(&img, &PipelineParams::default());
+    assert_eq!(out.width, 2);
     assert_eq!(out.data[0], 0);
     assert!(out.data[1] > 100 && out.data[1] < 200); // gamma of 0.5 -> mid-bright
     assert_eq!(out.data[3], 255);
@@ -585,7 +577,7 @@ fn demosaic_robust_bounds_do_not_crush_dark_channels() {
         "mean {} is crushed or blown",
         mean
     );
-    let (r, g, b) = img.px(64, 64);
+    let (r, g, b) = img.pixel(64, 64);
     assert!(r > 0.1 && g > 0.1 && b > 0.1);
 }
 
@@ -613,7 +605,7 @@ fn downscale_halves_longest_edge() {
     assert_eq!(d.width, 100);
     assert_eq!(d.height, 50);
     // average preserved (roughly)
-    let (r, g, b) = d.px(50, 25);
+    let (r, g, b) = d.pixel(50, 25);
     assert!(close(r, 0.1) && close(g, 0.2) && close(b, 0.3));
 }
 
@@ -730,12 +722,12 @@ fn apply_camera_matrix_identity_is_noop() {
     let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     apply_camera_matrix(&mut img, &identity);
 
-    assert!((img.px(0, 0).0 - 0.1).abs() < 1e-6);
-    assert!((img.px(0, 0).1 - 0.2).abs() < 1e-6);
-    assert!((img.px(0, 0).2 - 0.3).abs() < 1e-6);
-    assert!((img.px(1, 1).0 - 0.2).abs() < 1e-6);
-    assert!((img.px(1, 1).1 - 0.4).abs() < 1e-6);
-    assert!((img.px(1, 1).2 - 0.6).abs() < 1e-6);
+    assert!((img.pixel(0, 0).0 - 0.1).abs() < 1e-6);
+    assert!((img.pixel(0, 0).1 - 0.2).abs() < 1e-6);
+    assert!((img.pixel(0, 0).2 - 0.3).abs() < 1e-6);
+    assert!((img.pixel(1, 1).0 - 0.2).abs() < 1e-6);
+    assert!((img.pixel(1, 1).1 - 0.4).abs() < 1e-6);
+    assert!((img.pixel(1, 1).2 - 0.6).abs() < 1e-6);
 }
 
 #[test]
@@ -747,7 +739,7 @@ fn apply_camera_matrix_transforms_pixels() {
     let swap_rb = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
     apply_camera_matrix(&mut img, &swap_rb);
 
-    let (r, g, b) = img.px(0, 0);
+    let (r, g, b) = img.pixel(0, 0);
     assert!((r - 0.0).abs() < 1e-6);
     assert!((g - 0.0).abs() < 1e-6);
     assert!((b - 1.0).abs() < 1e-6);

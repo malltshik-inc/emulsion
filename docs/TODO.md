@@ -19,13 +19,13 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 
 ## 2. Dead code
 
-- [ ] core `error.rs`: remove unused `ok`/`err` helpers
-- [ ] core `colorops::invert` unused outside tests → remove (and its tests)
-- [ ] core `tonemap_and_quantize` wrapper unused outside tests → remove or fold
-- [ ] core `LinearImage::px` dup of `pixel()` → remove, rename test call sites
-- [ ] core `lib.rs` unused root re-exports
-- [ ] app: `EmulsionApp.folder` write-only field → remove
-- [ ] keep `save_sidecar` (backlog feature, see docs), keep its test
+- [x] core `error.rs`: remove unused `ok`/`err` helpers
+- [x] core `colorops::invert` unused outside tests → remove (and its tests)
+- [x] core `tonemap_and_quantize` wrapper unused outside tests → remove or fold
+- [x] core `LinearImage::px` dup of `pixel()` → remove, rename test call sites
+- [x] core `lib.rs` unused root re-exports
+- [x] app: `EmulsionApp.folder` write-only field → remove
+- [x] keep `save_sidecar` (backlog feature, see docs), keep its test
 
 ## 3. Tests
 

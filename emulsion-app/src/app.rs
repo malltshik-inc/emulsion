@@ -15,7 +15,6 @@ use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool
 use crate::theme::{install_fonts, install_style, load_logo};
 
 pub(crate) struct EmulsionApp {
-    pub(crate) folder: String,
     pub(crate) files: Vec<String>,
     pub(crate) tree: Vec<TreeNode>,
     pub(crate) expanded: HashSet<String>,
@@ -81,7 +80,6 @@ impl EmulsionApp {
         install_style(&cc.egui_ctx);
         let logo = load_logo(&cc.egui_ctx);
         Self {
-            folder: String::new(),
             files: Vec::new(),
             tree: Vec::new(),
             expanded: HashSet::new(),

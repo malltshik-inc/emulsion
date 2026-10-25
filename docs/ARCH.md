@@ -43,7 +43,7 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `image.rs` | `RgbaImage` (RGBA8 interleaved `Vec<u8>`) and `LinearImage` (flat RGB interleaved `Vec<f32>`), both `(width, height, data)` |
 | `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `decode_thumbnail(path, max_edge)` sub-samples the Bayer grid *before* demosaic for a fast small preview; `is_supported(path)` is the shared extension filter |
 | `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
-| `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
+| `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point` (rayon-parallel, in place) |
 | `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `flip_horizontal`, `downscale` (box average) |
 | `film.rs` | bundled film simulations: generated `FILMS` registry, lazy decoded `HaldLut` cache, trilinear sampling |
 | `tonemap.rs` | `develop(base, params) -> RgbaImage` — the interactive render path (WB→black-point→crop/rotate/flip → invert+exposure → contrast/shadows/highlights/saturation → film LUT → vignette) |

@@ -82,12 +82,6 @@ fn write_rgba(rgb: [f32; 3], rgba: &mut [u8]) {
     rgba[3] = 255;
 }
 
-/// Convert a linear-light `LinearImage` to an 8-bit `RgbaImage`,
-/// applying the sRGB gamma (the final step of the pipeline).
-pub fn tonemap_and_quantize(img: &LinearImage, out: &mut RgbaImage) {
-    tonemap_and_quantize_look(img, 0.0, 0.0, 0.0, 0.0, None, out);
-}
-
 fn tonemap_and_quantize_look(
     img: &LinearImage,
     contrast: f32,

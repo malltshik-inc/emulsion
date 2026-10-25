@@ -15,11 +15,3 @@ impl CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
-
-pub fn ok<T>(value: T) -> Result<T> {
-    Ok(value)
-}
-
-pub fn err<T>(message: &str) -> Result<T> {
-    Err(CoreError::Unsupported(String::from(message)))
-}
