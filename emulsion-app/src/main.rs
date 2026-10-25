@@ -881,8 +881,8 @@ impl EmulsionApp {
             .unwrap_or_else(|| String::from("emulsion-export"));
         let choice = rfd::FileDialog::new()
             .set_directory(&source)
-            .add_filter("PNG", &["png"])
             .add_filter("JPEG", &["jpg"])
+            .add_filter("PNG", &["png"])
             .set_file_name(format!("{}.jpg", stem))
             .save_file();
         let Some(dest) = choice else {
@@ -1027,7 +1027,7 @@ impl EmulsionApp {
             painter.galley(
                 pos2(
                     meta_rect.left() + meta_pad / 2.0,
-                    meta_rect.center().y - meta_galley.size().y / 2.0 + 3.0,
+                    meta_rect.center().y - meta_galley.size().y / 2.0,
                 ),
                 meta_galley,
                 DIM,
