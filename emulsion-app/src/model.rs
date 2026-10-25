@@ -211,6 +211,15 @@ pub(crate) struct ThumbData {
     pub(crate) source_size: (usize, usize),
 }
 
+/// A row in the library tree: an image leaf (`file_index` set) or a folder
+/// whose children are shown only while `expanded` contains its `path`.
+pub(crate) struct TreeNode {
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) children: Vec<TreeNode>,
+    pub(crate) file_index: Option<usize>,
+}
+
 pub(crate) type ThumbMessage = (u64, Option<ThumbData>);
 
 #[cfg(test)]

@@ -805,3 +805,52 @@ fn jpeg_quality_produces_different_output() {
     std::fs::remove_file(&path10).ok();
     std::fs::remove_file(&path100).ok();
 }
+
+#[test]
+fn thumbnail_stride_preserves_cfa_phase() {
+    use crate::decode::thumbnail_stride;
+    use rawler::CFA;
+
+    let bayer = CFA::new("RGGB");
+    assert_eq!(bayer.width, 2);
+    assert_eq!(bayer.height, 2);
+    // Bayer (2x2): stride must be odd (2·k+1) so both CFA colours survive.
+    for stride in (1..6).map(|i| thumbnail_stride(9000, 6000, &bayer, i)) {
+        assert!(stride % 2 == 1, "even stride, got {stride}");
+    }
+    // Small image, generous cap -> no sub-sampling at all.
+    assert_eq!(thumbnail_stride(100, 100, &bayer, 1000), 1);
+
+    let xtrans_pat = "RGBG".repeat(9);
+    let xtrans = CFA::new(&xtrans_pat);
+    assert_eq!((xtrans.width, xtrans.height), (6, 6));
+    let s = thumbnail_stride(6000, 4000, &xtrans, 100);
+    assert_eq!((s - 1) % 6, 0, "xtrans stride not ≡1 mod 6, got {s}");
+}
+
+#[test]
+fn decode_thumbnail_resizes_regular_image() {
+    use crate::decode::decode_thumbnail;
+
+    let path = std::env::temp_dir().join("emulsion_thumb_test.png");
+    let mut img = image::RgbaImage::new(200, 100);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        p.0 = [x as u8, y as u8, ((x + y) * 2) as u8, 255];
+    }
+    img.save(&path).unwrap();
+
+    let thumb = decode_thumbnail(path.to_str().unwrap(), 50).unwrap();
+    assert_eq!(thumb.size, (200, 100));
+    assert_eq!(thumb.image.width, 50);
+    assert_eq!(thumb.image.height, 25);
+    assert_eq!(thumb.image.data.len(), 50 * 25 * 3);
+    assert!(
+        thumb
+            .image
+            .data
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+    );
+
+    std::fs::remove_file(&path).ok();
+}

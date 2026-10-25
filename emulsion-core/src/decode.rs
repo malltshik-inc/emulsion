@@ -47,6 +47,98 @@ pub fn decode(path: &str) -> Result<LinearImage> {
     }
 }
 
+/// A quickly-decoded small image plus the source's true dimensions. `image`'s
+/// own `width/height` are the downscaled ones; `size` is always the real
+/// sensor/frame resolution (for metadata like the footer and crop defaults).
+pub struct ThumbnailImage {
+    pub image: LinearImage,
+    pub size: (usize, usize),
+}
+
+/// Fast `decode` for small previews: RAW is sub-sampled on the Bayer grid
+/// *before* demosaicing (the full-frame demosaic + f32 buffer is the slow
+/// part of `decode`), regular images use the `image` crate's `thumbnail`
+/// resize. `max_edge` caps the longest edge of the returned image.
+pub fn decode_thumbnail(path: &str, max_edge: usize) -> Result<ThumbnailImage> {
+    if is_raw_file(path) {
+        decode_raw_thumbnail(path, max_edge)
+    } else {
+        decode_regular_thumbnail(path, max_edge)
+    }
+}
+
+/// Sampling stride for a `max_edge`-capped thumbnail. The stride keeps the CFA
+/// phase intact on the sampled grid: a point `(y*s, x*s)` must carry the same
+/// colour as `(y, x)`. For the 2x2/6x6/2x8/12x12 patterns lcm(w,h) == max(w,h),
+/// so `stride ≡ 1 (mod period)` covers every supported CFA. (An even stride
+/// silently leaves a single Bayer colour in the sample, killing all chroma.)
+pub(crate) fn thumbnail_stride(
+    width: usize,
+    height: usize,
+    cfa: &rawler::CFA,
+    max_edge: usize,
+) -> usize {
+    let period = cfa.width.max(cfa.height).max(1);
+    let longest = width.max(height) as f32;
+    let mut stride = (longest / max_edge.max(1) as f32).max(1.0).ceil() as usize;
+    while stride > 1 && !(stride - 1).is_multiple_of(period) {
+        stride += 1;
+    }
+    stride
+}
+
+fn decode_raw_thumbnail(path: &str, max_edge: usize) -> Result<ThumbnailImage> {
+    let raw = rawler::decode_file(path).map_err(|e| CoreError::Io(format!("rawler: {}", e)))?;
+    let width = raw.width;
+    let height = raw.height;
+    let cfa = &raw.camera.cfa;
+    let pixels = raw.pixels_u16();
+    let stride = thumbnail_stride(width, height, cfa, max_edge);
+    let sw = width.div_ceil(stride);
+    let sh = height.div_ceil(stride);
+    let mut mini = Vec::with_capacity(sw * sh);
+    for y in 0..sh {
+        let sy = (y * stride).min(height - 1);
+        let row_off = sy * width;
+        for x in 0..sw {
+            let sx = (x * stride).min(width - 1);
+            mini.push(pixels[row_off + sx]);
+        }
+    }
+    let mut img = demosaic_bilinear(sw, sh, &mini, cfa);
+    if let Some(matrix) = raw.camera.color_matrix.get(&Illuminant::D65)
+        && let Some(cam2rgb) = camera_matrix_to_srgb(matrix)
+    {
+        apply_camera_matrix(&mut img, &cam2rgb);
+    }
+    Ok(ThumbnailImage {
+        image: img,
+        size: (width, height),
+    })
+}
+
+fn decode_regular_thumbnail(path: &str, max_edge: usize) -> Result<ThumbnailImage> {
+    let dimage = image::open(path).map_err(|e| CoreError::Io(format!("read: {}", e)))?;
+    let size = (dimage.width() as usize, dimage.height() as usize);
+    let small = dimage.thumbnail(max_edge.max(1) as u32, max_edge.max(1) as u32);
+    let rgba = small.into_rgba8();
+    let width = rgba.width() as usize;
+    let height = rgba.height() as usize;
+    let raw_bytes = rgba.as_raw();
+
+    let mut out = LinearImage::new(width, height);
+    out.data
+        .par_chunks_exact_mut(3)
+        .enumerate()
+        .for_each(|(i, pix)| {
+            let j = i * 4;
+            pix[0] = srgb_decode(raw_bytes[j] as f32 / 255.0);
+            pix[1] = srgb_decode(raw_bytes[j + 1] as f32 / 255.0);
+            pix[2] = srgb_decode(raw_bytes[j + 2] as f32 / 255.0);
+        });
+    Ok(ThumbnailImage { image: out, size })
+}
+
 fn decode_raw(path: &str) -> Result<LinearImage> {
     let raw = rawler::decode_file(path).map_err(|e| CoreError::Io(format!("rawler: {}", e)))?;
     let width = raw.width;

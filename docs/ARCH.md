@@ -41,7 +41,7 @@ No C dependencies are ever linked. `emulsion-core` is pure Rust everywhere.
 | `lib.rs` | `process(source, params) -> Result<RgbaImage>` — the one pure entry point; re-exports public types |
 | `params.rs` | `PipelineParams` + `CropRect` — serde `Serialize/Deserialize`, `Default` impl |
 | `image.rs` | `RgbaImage` (RGBA8 interleaved `Vec<u8>`) and `LinearImage` (flat RGB interleaved `Vec<f32>`), both `(width, height, data)` |
-| `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `is_supported(path)` is the shared extension filter |
+| `decode.rs` | `decode(path) -> Result<LinearImage>` — RAW via `rawler`, everything else via `image` crate (de-gamma'd to linear); `decode_thumbnail(path, max_edge)` sub-samples the Bayer grid *before* demosaic for a fast small preview; `is_supported(path)` is the shared extension filter |
 | `demosaic.rs` | `demosaic_bilinear(width, height, bayer: &[u16], cfa) -> LinearImage` + `robust_bounds` — robust 0.25%/99.75% percentile per-channel auto-scale, sampled on a CFA-safe 2D grid |
 | `colorops.rs` | `wb_gains`, `apply_wb`, `apply_exposure`, `apply_black_point`, `invert` (rayon-parallel, in place) |
 | `geometry.rs` | `crop`, `rotate_90`, `rotate_fine` (bilinear, white fill), `flip_horizontal`, `downscale` (box average) |
@@ -87,12 +87,12 @@ method in its own `ui/` file.
 | `app.rs` | `EmulsionApp` state, constructor, `eframe::App::ui` frame flow, reset/copy/paste |
 | `theme.rs` | palette + layout constants, bundled fonts, egui style, logo/window icon |
 | `model.rs` | `Tool`, `CropAspect`, `Orientation`, `CropDrag`, decoded-image structs (`Loaded`, `ThumbData`) |
-| `library.rs` | folder scan, file selection + settings, background decode, thumbnail worker |
+| `library.rs` | folder scan (tree), file selection + settings, background decode, on-demand thumbnail worker |
 | `preview.rs` | preview/thumbnail texture sync from `develop` |
 | `histogram.rs` | histogram computation + painting |
 | `export.rs` | export dialog, single/all-edited export |
 | `ui/top_bar.rs` | brand bar, file meta, Reset/Copy/Paste/Export buttons |
-| `ui/sidebar.rs` | library list, file rows, histogram/stats footer |
+| `ui/sidebar.rs` | library tree (folder rows + file rows), histogram/stats footer |
 | `ui/settings.rs` | tool search + tab strip, expanded slider/rotate/develop panel |
 | `ui/film.rs` | film simulation search, strip, lazily generated cards/previews |
 | `ui/stage.rs` | canvas paint, zoom/pan, loading state, background gradient |
@@ -104,7 +104,8 @@ State held by `EmulsionApp`:
 
 | field | role |
 |---|---|
-| `folder`, `files`, `cursor` | flat recursive image list of the opened folder |
+| `folder`, `files`, `cursor` | the opened folder; `files` is the flat image list (DFS leaf order over the tree) that the cursor, settings and export index into |
+| `tree`, `expanded` | library tree (`TreeNode`: file leaf or folder with children) + the set of expanded folder paths (start empty, so folders begin closed) |
 | `loaded: Option<Loaded>` | preview base (`LinearImage`, downscaled to ≤1800 px longest edge) |
 | `load_rx` | mpsc `Receiver` for the background decode result |
 | `thumb_bases`, `thumb_textures` | per-file ≤96 px thumbnail base + its egui texture (one per row) |
@@ -127,7 +128,7 @@ Workflow in `App::ui` each frame:
 4. Build panels (top bar, left file list, top tool strip + expanded tool panel,
    central canvas); each panel calls its own method on `self` (keeps the egui
    closures single-capture).
-5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders one row per file (thumbnail + basename) from the thumbnail cache; no separate preview pane.
+5. Canvas: `allocate_painter` + `painter.image(texture_id, rect, uv, white)` with wheel-zoom and drag-pan (left or middle) gated on `is_pointer_button_down_on()` so only a press that started on the canvas pans. Space resets `pan` to `Vec2::ZERO` (recenter), suppressed while `ctx.egui_wants_keyboard_input()` so value boxes keep their space key. The left panel renders the library tree (`render_tree` walks `self.tree`): folder rows are painted rows that toggle `self.expanded`, image rows are the 64 px thumbnail rows. Thumbnail decoding is on-demand — `refresh_thumbnails` on folder open decodes only the currently visible leaves, and a folder-expand/collapse frame runs `schedule_visible_thumbnails`, which cancels the old worker (generation bump) and decodes only the visible leaves whose base is still `None`. Scheduling is gated on a toggle actually happening that frame: scheduling every frame would cancel the worker before it finished a slow RAW. Collapsed folders' files are never decoded. Rows size their width to their content (name + indentation), so deep names widen the scroll area's content; `ScrollArea::both()` makes the overflow reachable with the horizontal scrollbar or Shift + wheel. No separate preview pane.
 
 Selecting a row calls `select_file`: it stores the current `params` under the old
 path, then loads the new path's stored params (`PipelineParams::default()` if the
@@ -355,6 +356,13 @@ None of this is wired into the UI yet (see 8).
     panel's closure, is what makes the resize drag actually do anything. Without it the
     cursor changes to the resize icon but the width stays put. Left/right panels do
     call `take_available_space()` on purpose.
+11. **`vec[i].get(j).is_none()` tests the *outer* `Option`.** `self.thumb_bases` is
+    `Vec<Option<LinearImage>>`, so `.get(j)` is `Option<&Option<LinearImage>>` and
+    `.is_none()` is `false` for every in-bounds index whether or not the base is
+    cached — a thumbnail scheduler written that way never schedules anything for
+    expanded folders (the "nested thumbnails don't load" bug; root still worked only
+    because `refresh_thumbnails` bypassed the filter). Check the inner slot with
+    `is_some_and(Option::is_none)` (see `indices_to_load` in `library.rs`, regression-tested).
 
 ### Limitations (known, mostly deferred by PRODUCT.md)
 
@@ -404,6 +412,22 @@ None of this is wired into the UI yet (see 8).
     lazily (`show_viewport`) with two cards of preload beyond each edge, so a large
     result set costs only the visible textures at a time. The strip is horizontal
     only, so the mouse wheel scrolls it sideways without Shift.
+13. **Library thumbnails are scheduled only for the visible (expanded) tree.**
+    `refresh_thumbnails` (folder open) and `schedule_visible_thumbnails` (expand/
+    collapse) both cancel the running worker and restart it covering only visible
+    leaves whose base is still `None` — a large folder expanded mid-scan restarts
+    the decode from scratch, redoing only what was still pending. `files` is the
+    flat leaf list in DFS display order (root files, then each subtree), *not*
+    globally sorted by path; nothing outside the tree should assume `files` order
+    beyond "one entry per supported image". The selected file's row can be scrolled
+    out of view or inside a collapsed folder; selection still holds.
+14. **Thumbnails use the fast `decode_thumbnail` path, not `decode`.** RAW thumbs
+    sub-sample the Bayer grid (`thumbnail_stride`, `stride ≡ 1 (mod CFA period)`
+    so the phase survives) and demosaic only ~1/450th of a 64MP frame, instead of
+    demosaicing the full frame + allocating a f32 base + box-downscaling. Regular
+    images decode fully (already fast) then `image`'s `thumbnail`. The true source
+    dimensions still come back in `ThumbnailImage.size` for the footer/crop
+    defaults; the file row shows only the format, never a resolution.
 
 ---
 

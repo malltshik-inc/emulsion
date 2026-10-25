@@ -1,6 +1,6 @@
 //! Application state, constructor and eframe frame loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
@@ -11,12 +11,14 @@ use egui::{FontFamily, Pos2, Vec2};
 use emulsion_core::params::{CropRect, PipelineParams};
 
 use crate::histogram::Histogram;
-use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool};
+use crate::model::{CropAspect, CropDrag, Loaded, Orientation, ThumbMessage, Tool, TreeNode};
 use crate::theme::{install_fonts, install_style, load_logo};
 
 pub(crate) struct EmulsionApp {
     pub(crate) folder: String,
     pub(crate) files: Vec<String>,
+    pub(crate) tree: Vec<TreeNode>,
+    pub(crate) expanded: HashSet<String>,
     pub(crate) cursor: Option<usize>,
     pub(crate) loaded: Option<Loaded>,
 
@@ -81,6 +83,8 @@ impl EmulsionApp {
         Self {
             folder: String::new(),
             files: Vec::new(),
+            tree: Vec::new(),
+            expanded: HashSet::new(),
             cursor: None,
             loaded: None,
             load_rx: None,

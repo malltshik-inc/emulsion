@@ -8,6 +8,7 @@ use egui::{
 
 use crate::app::EmulsionApp;
 use crate::histogram::paint_histogram;
+use crate::model::TreeNode;
 use crate::theme::{ACCENT, ACCENT_LINE, ACCENT_SOFT, DIM, HOVER, LINE, MUTED, TEXT};
 use crate::util::{aspect_label, cover_uv, file_extension, file_name};
 
@@ -76,7 +77,7 @@ impl EmulsionApp {
         let list_height = ui.available_height().max(24.0);
         let (list_rect, list_response) =
             ui.allocate_exact_size(vec2(ui.available_width(), list_height), Sense::click());
-        if self.files.is_empty() {
+        if self.tree.is_empty() {
             if list_response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
@@ -100,14 +101,34 @@ impl EmulsionApp {
                     .max_rect(list_rect)
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
-                    egui::ScrollArea::vertical()
+                    egui::ScrollArea::both()
                         .id_salt("file_list")
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            for i in 0..self.files.len() {
-                                if self.file_row(ui, i) {
-                                    self.select_file(i);
+                            let viewport = ui.available_width();
+                            let mut clicked: Option<usize> = None;
+                            let mut toggles: Vec<String> = Vec::new();
+                            self.render_tree(
+                                ui,
+                                &self.tree,
+                                0,
+                                viewport,
+                                &mut clicked,
+                                &mut toggles,
+                            );
+                            // Only a real folder toggle changes which leaves are
+                            // visible; re-scheduling on every frame would cancel the
+                            // decode worker before it could finish slow RAWs.
+                            if !toggles.is_empty() {
+                                for path in toggles {
+                                    if !self.expanded.remove(&path) {
+                                        self.expanded.insert(path);
+                                    }
                                 }
+                                self.schedule_visible_thumbnails();
+                            }
+                            if let Some(i) = clicked {
+                                self.select_file(i);
                             }
                         });
                 },
@@ -119,8 +140,89 @@ impl EmulsionApp {
         }
     }
 
-    fn file_row(&self, ui: &mut egui::Ui, index: usize) -> bool {
-        let width = ui.available_width();
+    fn render_tree(
+        &self,
+        ui: &mut egui::Ui,
+        nodes: &[TreeNode],
+        depth: usize,
+        viewport: f32,
+        clicked: &mut Option<usize>,
+        toggles: &mut Vec<String>,
+    ) {
+        for node in nodes {
+            if let Some(index) = node.file_index {
+                if self.file_row(ui, index, depth, viewport) {
+                    *clicked = Some(index);
+                }
+            } else {
+                let is_open = self.expanded.contains(&node.path);
+                if self.folder_row(ui, node, is_open, depth, viewport) {
+                    toggles.push(node.path.clone());
+                }
+                if is_open {
+                    self.render_tree(ui, &node.children, depth + 1, viewport, clicked, toggles);
+                }
+            }
+        }
+    }
+
+    fn folder_row(
+        &self,
+        ui: &mut egui::Ui,
+        node: &TreeNode,
+        is_open: bool,
+        depth: usize,
+        viewport: f32,
+    ) -> bool {
+        let indent = 8.0 + depth as f32 * 16.0;
+        let name_w = ui.ctx().fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(
+                    node.name.clone(),
+                    FontId::proportional(14.0),
+                    Color32::WHITE,
+                )
+                .rect
+                .width()
+        });
+        let width = viewport.max(indent + 16.0 + name_w + 16.0);
+        let (response, painter) = ui.allocate_painter(vec2(width, 30.0), Sense::click());
+        let row = response.rect;
+        let inner = row.shrink2(vec2(2.0, 1.0));
+        if response.hovered() {
+            painter.rect_filled(inner, 7.0, HOVER);
+        }
+        painter.text(
+            pos2(row.left() + indent, row.center().y),
+            Align2::LEFT_CENTER,
+            if is_open { "\u{25be}" } else { "\u{25b8}" },
+            FontId::proportional(13.0),
+            DIM,
+        );
+        let name_rect = Rect::from_min_max(
+            pos2(row.left() + indent + 16.0, row.top() + 2.0),
+            pos2(row.right() - 8.0, row.bottom() - 2.0),
+        );
+        painter.with_clip_rect(name_rect).text(
+            pos2(row.left() + indent + 16.0, row.center().y),
+            Align2::LEFT_CENTER,
+            node.name.as_str(),
+            FontId::proportional(14.0),
+            MUTED,
+        );
+        response.on_hover_text(node.path.as_str()).clicked()
+    }
+
+    fn file_row(&self, ui: &mut egui::Ui, index: usize, depth: usize, viewport: f32) -> bool {
+        let indent = 8.0 + depth as f32 * 16.0;
+        let name = file_name(&self.files[index]);
+        let name_w = ui.ctx().fonts_mut(|fonts| {
+            fonts
+                .layout_no_wrap(name.clone(), FontId::proportional(14.0), Color32::WHITE)
+                .rect
+                .width()
+        });
+        let width = viewport.max(indent + 64.0 + 11.0 + name_w + 20.0);
         let (response, painter) = ui.allocate_painter(vec2(width, 64.0), Sense::click());
         let row = response.rect;
         let selected = self.cursor == Some(index);
@@ -134,7 +236,7 @@ impl EmulsionApp {
         }
 
         let thumb = Rect::from_min_size(
-            pos2(row.left() + 8.0, row.center().y - 24.0),
+            pos2(row.left() + indent, row.center().y - 24.0),
             vec2(64.0, 48.0),
         );
         painter.rect_filled(thumb, 6.0, Color32::from_rgb(233, 225, 209));
@@ -179,17 +281,14 @@ impl EmulsionApp {
         text_painter.text(
             pos2(thumb.right() + 11.0, row.center().y - 9.0),
             Align2::LEFT_CENTER,
-            file_name(&self.files[index]),
+            name,
             FontId::proportional(14.0),
             name_color,
         );
-        let meta = self
-            .thumb_sizes
-            .get(index)
-            .copied()
-            .flatten()
-            .map(|(w, h)| format!("{} × {}", w, h))
-            .unwrap_or_else(|| file_extension(&self.files[index]));
+        // Show only the format under a thumbnail; the resolution would read as
+        // the small thumb's own dimensions and only confuse (the true source
+        // size still lives in the footer/`current_size`).
+        let meta = file_extension(&self.files[index]);
         text_painter.text(
             pos2(thumb.right() + 11.0, row.center().y + 9.0),
             Align2::LEFT_CENTER,

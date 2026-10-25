@@ -1,5 +1,6 @@
 //! Folder scanning, file selection and background decoding.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
@@ -9,33 +10,90 @@ use egui::Vec2;
 use emulsion_core::params::PipelineParams;
 
 use crate::app::EmulsionApp;
-use crate::model::{CropDrag, Loaded, Orientation, ThumbData};
-use crate::theme::THUMB_EDGE;
+use crate::model::{CropDrag, Loaded, Orientation, ThumbData, TreeNode};
+use crate::theme::{THUMB_DECODE_EDGE, THUMB_EDGE};
+
+/// The image leaves currently reachable through the expanded folders.
+fn visible_indices(nodes: &[TreeNode], expanded: &HashSet<String>) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut stack: Vec<&[TreeNode]> = vec![nodes];
+    // Flat-collect via a worklist: a folder is entered only while expanded.
+    while let Some(list) = stack.pop() {
+        for node in list {
+            match node.file_index {
+                Some(i) => out.push(i),
+                None => {
+                    if expanded.contains(&node.path) {
+                        stack.push(&node.children);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The visible leaves whose thumbnail base is still missing (should be decoded
+/// next). An index is loadable only when it is in bounds and its cached base is
+/// `None` — `Some(&None).is_none()` is false, so `.get(i).is_none()` would
+/// wrongly drop every in-bounds index.
+fn indices_to_load<T>(thumb_bases: &[Option<T>], visible: &[usize]) -> Vec<usize> {
+    visible
+        .iter()
+        .copied()
+        .filter(|i| thumb_bases.get(*i).is_some_and(Option::is_none))
+        .collect()
+}
 
 impl EmulsionApp {
-    fn list_images(path: &str) -> Result<Vec<String>, String> {
-        let mut out = Vec::new();
-        let mut queue: Vec<String> = vec![String::from(path)];
-        while let Some(dir) = queue.pop() {
-            match std::fs::read_dir(&dir) {
-                Ok(entries) => {
-                    for entry in entries.flatten() {
-                        let p = entry.path();
-                        if p.is_dir() {
-                            queue.push(p.to_string_lossy().into_owned());
-                        } else {
-                            let s = p.to_string_lossy().into_owned();
-                            if emulsion_core::decode::is_supported(&s) {
-                                out.push(s);
-                            }
+    /// Recursive scan of `dir`: image leaves and one node per subfolder. Each
+    /// directory lists its images (by name) then its subfolders (by name).
+    /// Leaf paths are appended to `files`, so `file_index` matches the flat
+    /// list used by the cursor, settings and export.
+    fn build_tree(dir: &str, files: &mut Vec<String>) -> Result<Vec<TreeNode>, String> {
+        let mut subdirs: Vec<(String, String)> = Vec::new();
+        let mut file_paths: Vec<String> = Vec::new();
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        let s = path.to_string_lossy().into_owned();
+                        subdirs.push((crate::util::file_name(&s), s));
+                    } else {
+                        let s = path.to_string_lossy().into_owned();
+                        if emulsion_core::decode::is_supported(&s) {
+                            file_paths.push(s);
                         }
                     }
                 }
-                Err(e) => return Err(format!("cannot read {}: {}", dir, e)),
             }
+            Err(e) => return Err(format!("cannot read {}: {}", dir, e)),
         }
-        out.sort();
-        Ok(out)
+        subdirs.sort_by(|a, b| a.0.cmp(&b.0));
+        file_paths.sort();
+        let mut nodes = Vec::with_capacity(file_paths.len() + subdirs.len());
+        for path in file_paths {
+            let index = files.len();
+            let name = crate::util::file_name(&path);
+            files.push(path.clone());
+            nodes.push(TreeNode {
+                name,
+                path,
+                children: Vec::new(),
+                file_index: Some(index),
+            });
+        }
+        for (name, path) in subdirs {
+            let children = Self::build_tree(&path, files)?;
+            nodes.push(TreeNode {
+                name,
+                path,
+                children,
+                file_index: None,
+            });
+        }
+        Ok(nodes)
     }
 
     pub(crate) fn open_folder(&mut self) {
@@ -55,17 +113,21 @@ impl EmulsionApp {
             self.film_preview_params = None;
             self.film_preview_source = None;
             self.dirty = true;
-            match Self::list_images(path.as_str()) {
-                Ok(files) => {
+            let mut files = Vec::new();
+            match Self::build_tree(path.as_str(), &mut files) {
+                Ok(tree) => {
+                    self.tree = tree;
                     self.files = files;
                     self.status = format!("{} images in folder", self.files.len());
                 }
                 Err(e) => {
+                    self.tree = Vec::new();
                     self.files = Vec::new();
                     self.status = format!("error: {}", e);
                 }
             }
-            self.start_thumbnails();
+            self.expanded.clear();
+            self.refresh_thumbnails();
         }
     }
 
@@ -163,7 +225,9 @@ impl EmulsionApp {
         }
     }
 
-    fn start_thumbnails(&mut self) {
+    /// Decodes thumbnails for `indices` on a background thread. A new call
+    /// cancels the previous worker via the shared flag + generation counter.
+    fn start_thumbnail_worker(&mut self, indices: Vec<usize>) {
         if let Some(flag) = &self.thumb_cancel {
             flag.store(true, Ordering::Relaxed);
         }
@@ -171,26 +235,26 @@ impl EmulsionApp {
         let generation = self.thumb_generation;
         let cancel = Arc::new(AtomicBool::new(false));
         self.thumb_cancel = Some(Arc::clone(&cancel));
-        self.thumb_bases = vec![None; self.files.len()];
-        self.thumb_textures = vec![None; self.files.len()];
-        self.thumb_sizes = vec![None; self.files.len()];
-        self.thumb_params = vec![None; self.files.len()];
-        self.thumbs_dirty = true;
 
         let files = self.files.clone();
         let (sender, receiver) = channel();
         self.thumb_rx = Some(receiver);
         std::thread::spawn(move || {
-            for (index, path) in files.iter().enumerate() {
+            for index in indices {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                let base = match emulsion_core::decode::decode(path.as_str()) {
-                    Ok(base) => base,
-                    Err(_) => continue,
+                let Some(path) = files.get(index) else {
+                    continue;
                 };
-                let source_size = (base.width, base.height);
-                let small = emulsion_core::geometry::downscale(&base, THUMB_EDGE);
+                let thumb =
+                    match emulsion_core::decode::decode_thumbnail(path.as_str(), THUMB_DECODE_EDGE)
+                    {
+                        Ok(thumb) => thumb,
+                        Err(_) => continue,
+                    };
+                let source_size = thumb.size;
+                let small = emulsion_core::geometry::downscale(&thumb.image, THUMB_EDGE);
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
@@ -210,6 +274,29 @@ impl EmulsionApp {
             }
             let _ = sender.send((generation, None));
         });
+    }
+
+    /// Full reset after a folder open: clears every cache and schedules the
+    /// thumbnails of the rows that are visible right now (root files only,
+    /// since folders start collapsed).
+    pub(crate) fn refresh_thumbnails(&mut self) {
+        self.thumb_bases = vec![None; self.files.len()];
+        self.thumb_textures = vec![None; self.files.len()];
+        self.thumb_sizes = vec![None; self.files.len()];
+        self.thumb_params = vec![None; self.files.len()];
+        self.thumbs_dirty = true;
+        let visible = visible_indices(&self.tree, &self.expanded);
+        self.start_thumbnail_worker(visible);
+    }
+
+    /// On-demand follow-up after a folder is expanded: decode only the newly
+    /// visible leaves that are not cached yet (already-loaded rows are kept).
+    pub(crate) fn schedule_visible_thumbnails(&mut self) {
+        let visible = visible_indices(&self.tree, &self.expanded);
+        let to_load = indices_to_load(&self.thumb_bases, &visible);
+        if !to_load.is_empty() {
+            self.start_thumbnail_worker(to_load);
+        }
     }
 
     pub(crate) fn poll_thumbnails(&mut self) {
@@ -293,5 +380,118 @@ impl EmulsionApp {
 
     pub(crate) fn is_current_edited(&self) -> bool {
         self.params != PipelineParams::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_fixture() -> (std::path::PathBuf, String) {
+        let root = std::env::temp_dir().join(format!(
+            "emulsion-tree-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("alpha/nested")).unwrap();
+        std::fs::create_dir_all(root.join("zeta")).unwrap();
+        std::fs::write(root.join("b.jpg"), vec![0u8]).unwrap();
+        std::fs::write(root.join("a.orf"), vec![0u8]).unwrap();
+        std::fs::write(root.join("alpha/x.png"), vec![0u8]).unwrap();
+        std::fs::write(root.join("alpha/nested/y.arw"), vec![0u8]).unwrap();
+        std::fs::write(root.join("notes.txt"), "not an image".as_bytes()).unwrap();
+        let path = root.to_string_lossy().into_owned();
+        (root, path)
+    }
+
+    fn cleanup(root: &std::path::Path) {
+        for _ in 0..5 {
+            if std::fs::remove_dir_all(root).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tree_groups_files_first_then_folders_sorted() {
+        let (root, path) = make_fixture();
+        let mut files = Vec::new();
+        let tree = EmulsionApp::build_tree(&path, &mut files).unwrap();
+
+        let top: Vec<&str> = tree
+            .iter()
+            .map(|n| {
+                if n.file_index.is_some() {
+                    "file"
+                } else {
+                    "dir"
+                }
+            })
+            .collect();
+        assert_eq!(top, vec!["file", "file", "dir", "dir"]);
+        assert_eq!(tree[0].name, "a.orf");
+        assert_eq!(tree[1].name, "b.jpg");
+        assert_eq!(tree[2].name, "alpha");
+        assert_eq!(tree[3].name, "zeta");
+        assert_eq!(tree[2].file_index, None);
+        assert_eq!(tree[3].file_index, None);
+        assert_eq!(tree[0].file_index, Some(0));
+        assert_eq!(tree[1].file_index, Some(1));
+
+        let alpha = &tree[2].children;
+        assert_eq!(alpha[0].name, "x.png");
+        assert_eq!(alpha[1].name, "nested");
+        assert_eq!(alpha[0].file_index, Some(2));
+
+        let nested = &alpha[1].children;
+        assert_eq!(nested[0].name, "y.arw");
+        assert_eq!(nested[0].file_index, Some(3));
+
+        assert_eq!(files.len(), 4);
+        assert_eq!(files[0], root.join("a.orf").to_string_lossy());
+        assert_eq!(
+            files[3],
+            root.join("alpha")
+                .join("nested")
+                .join("y.arw")
+                .to_string_lossy()
+        );
+
+        cleanup(&root);
+    }
+
+    #[test]
+    fn visible_indices_follows_expansion() {
+        let (root, path) = make_fixture();
+        let mut files = Vec::new();
+        let tree = EmulsionApp::build_tree(&path, &mut files).unwrap();
+        cleanup(&root);
+
+        let empty = HashSet::new();
+        assert_eq!(visible_indices(&tree, &empty), vec![0, 1]);
+
+        let mut expanded = HashSet::new();
+        expanded.insert(tree[2].path.clone());
+        assert_eq!(visible_indices(&tree, &expanded), vec![0, 1, 2]);
+
+        expanded.insert(tree[2].children[1].path.clone());
+        assert_eq!(visible_indices(&tree, &expanded), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn indices_to_load_skips_cached_and_out_of_bounds() {
+        // Regression: `.get(i).is_none()` tests the outer Option, which is
+        // `Some(..)` for every in-bounds index, so nothing was ever scheduled
+        // for expanded folders (root-only thumbnails still worked because
+        // `refresh_thumbnails` bypasses this filter).
+        let thumb_bases: Vec<Option<u8>> = vec![Some(1), None, None];
+        assert_eq!(indices_to_load(&thumb_bases, &[0, 1, 2]), vec![1, 2]);
+        assert_eq!(indices_to_load(&thumb_bases, &[0, 2, 99]), vec![2]);
+        assert_eq!(indices_to_load(&thumb_bases, &[0]), Vec::<usize>::new());
     }
 }

@@ -38,8 +38,10 @@ Mark II shooting high-res mode (≈64 MP ORF files).
 Three-zone window:
 
 - **File browser (left):** contains the *Open folder…* button, a preview of the
-  currently selected image, and a flat, recursive list of all supported images in
-  the opened folder. Clicking an image opens it.
+  currently selected image, and a recursive list of all supported images in the
+  opened folder, arranged as a tree: a subfolder is a row that expands in place
+  (closed by default) to its images and its own subfolders. Each directory lists
+  its images by name first, then its subfolders by name. Clicking an image opens it.
 - **Canvas (center):** shows the current result, fit to the window by default.
   Zoom with the mouse wheel. Pan by dragging with the left button or middle button.
   Press **Space** to recenter the image.
@@ -62,21 +64,26 @@ Supporting structure:
 
 ## 5. Opening files (MUST)
 
-- MUST support **JPEG, PNG, TIFF** and **ORF (Olympus RAW)**.
-- Other camera RAW formats (NEF, CR2/3, ARW, RW2, RAF, DNG, …) should be supported
-  via the same path, but are not a v1 release gate and must not degrade ORF.
+- MUST support **JPEG, PNG, TIFF** and **ORF, NEF, CR2/3, ARW, RW2, RAF, DNG**.
+- Other camera RAW formats' support is welcomed but optional.
 - MUST show a clear "loading" state while a RAW decodes.
 - A file never edited in this session starts from **neutral settings** (see §7
-  defaults), with Develop off. The user enables it when editing a negative. Each file keeps its own settings: switching away and back restores them
-  (session-scoped; see §10).
+  defaults)
 
 ## 6. File browser (MUST)
 
 - MUST list images recursively under the chosen folder, sorted by name.
+- MUST render subfolders as collapsible rows, closed by default; expanding a
+  folder reveals its images and subfolders (which expand the same way).
+- MUST let names that overrun the panel width be scrolled into view (horizontal
+  scrollbar or Shift + wheel).
 - MUST be reachable via `Open folder…`, which lives inside the file browser panel
   and uses the platform's native folder picker.
-- MUST show a small thumbnail per file in the list (decoded in the background; a
-  placeholder until it is ready). There is no separate selection preview pane.
+- MUST show a small thumbnail per visible file in the list (decoded in the
+  background; a placeholder until it is ready). Thumbnails of a collapsed folder
+  are only decoded once that folder is expanded; collapsing never discards
+  already-decoded thumbnails. A row shows the file's format under the thumb,
+  never a resolution. There is no separate selection preview pane.
 - MUST list every decodable format (all RAW extensions the decoder accepts, plus
   JPEG/PNG/TIFF) - an ARW next to an ORF must be visible.
 - MUST NOT modify, move or delete any file.
