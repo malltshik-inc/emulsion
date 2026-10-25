@@ -35,6 +35,10 @@ pub struct PipelineParams {
     /// Index into [`crate::film::films`], `None` = no film simulation.
     #[serde(default)]
     pub film: Option<u16>,
+    /// Output boost applied only when Develop (invert) is on: simultaneously
+    /// raises exposure, contrast and saturation. Range -100..100, 0 = none.
+    #[serde(default)]
+    pub invert_sensitivity: f32,
     /// Per-channel black point, 0.0..1.0
     pub black_point: [f32; 3],
     /// negative -> positive flip
@@ -66,6 +70,7 @@ impl Default for PipelineParams {
             rotate_90: 0,
             fine_angle: 0.0,
             flip_horizontal: false,
+            invert_sensitivity: 0.0,
             crop: None,
         }
     }

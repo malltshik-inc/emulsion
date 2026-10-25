@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use crate::{
     colorops::{apply_black_point, apply_exposure, apply_wb, invert, wb_gains},
-    decode::is_supported,
+    decode::{apply_camera_matrix, camera_matrix_to_srgb, is_supported},
     demosaic::demosaic_bilinear,
     demosaic::robust_bounds,
     export::save_sidecar,
@@ -439,29 +439,22 @@ fn develop_wb_temperature_warms_converted_negative() {
 }
 
 #[test]
-fn develop_defaults_apply_conversion_baseline() {
-    // The negative -> positive conversion has a built-in baseline (EV +1.4,
-    // WB +70, contrast +40, saturation +20). Neutral params must convert a
-    // mid-grey scan to the tuned baseline look, not to a flat/dark result.
+fn develop_output_boosts_negative_only() {
     let base = make_img(4, 4, 0.3);
-    let out = develop(
+
+    // Output slider only affects the inverted path.
+    let neutral = develop(
         &base,
         &PipelineParams {
             invert: true,
             ..PipelineParams::default()
         },
     );
-    assert_eq!(&out.data[..4], &[193, 173, 149, 255]);
-
-    // Cancelling the baseline must be visibly different (darker/flatter).
-    let cancelled = develop(
+    let boosted = develop(
         &base,
         &PipelineParams {
             invert: true,
-            wb_temperature: -80.0,
-            exposure: -1.4,
-            contrast: -82.0,
-            saturation: -20.0,
+            invert_sensitivity: 100.0,
             ..PipelineParams::default()
         },
     );
@@ -473,7 +466,32 @@ fn develop_defaults_apply_conversion_baseline() {
             .reduce(|| 0, |a, b| a + b);
         sum / (img.data.len() / 4) as u64
     };
-    assert!(mean(&out) > mean(&cancelled));
+    assert!(
+        mean(&boosted) > mean(&neutral),
+        "output should brighten negative"
+    );
+
+    // Positive path ignores output.
+    let pos_neutral = develop(
+        &base,
+        &PipelineParams {
+            invert: false,
+            ..PipelineParams::default()
+        },
+    );
+    let pos_boosted = develop(
+        &base,
+        &PipelineParams {
+            invert: false,
+            invert_sensitivity: 100.0,
+            ..PipelineParams::default()
+        },
+    );
+    assert_eq!(
+        &pos_neutral.data[..4],
+        &pos_boosted.data[..4],
+        "output should not affect positive"
+    );
 }
 
 #[test]
@@ -691,6 +709,60 @@ fn params_film_roundtrips_and_old_patches_default_to_none() {
     value.as_object_mut().unwrap().remove("film");
     let old = serde_json::from_value::<PipelineParams>(value).unwrap();
     assert_eq!(old.film, None);
+}
+
+#[test]
+fn camera_matrix_to_srgb_rejects_wrong_length() {
+    assert!(camera_matrix_to_srgb(&[1.0, 2.0, 3.0]).is_none());
+    assert!(camera_matrix_to_srgb(&[1.0; 10]).is_none());
+    assert!(camera_matrix_to_srgb(&[]).is_none());
+    assert!(camera_matrix_to_srgb(&[1.0; 9]).is_some());
+}
+
+#[test]
+fn apply_camera_matrix_identity_is_noop() {
+    let mut img = LinearImage::new(2, 2);
+    img.set_px(0, 0, 0.1, 0.2, 0.3);
+    img.set_px(1, 0, 0.4, 0.5, 0.6);
+    img.set_px(0, 1, 0.7, 0.8, 0.9);
+    img.set_px(1, 1, 0.2, 0.4, 0.6);
+
+    let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    apply_camera_matrix(&mut img, &identity);
+
+    assert!((img.px(0, 0).0 - 0.1).abs() < 1e-6);
+    assert!((img.px(0, 0).1 - 0.2).abs() < 1e-6);
+    assert!((img.px(0, 0).2 - 0.3).abs() < 1e-6);
+    assert!((img.px(1, 1).0 - 0.2).abs() < 1e-6);
+    assert!((img.px(1, 1).1 - 0.4).abs() < 1e-6);
+    assert!((img.px(1, 1).2 - 0.6).abs() < 1e-6);
+}
+
+#[test]
+fn apply_camera_matrix_transforms_pixels() {
+    let mut img = LinearImage::new(1, 1);
+    img.set_px(0, 0, 1.0, 0.0, 0.0); // pure red in camera space
+
+    // Matrix: swap R and B channels
+    let swap_rb = [[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
+    apply_camera_matrix(&mut img, &swap_rb);
+
+    let (r, g, b) = img.px(0, 0);
+    assert!((r - 0.0).abs() < 1e-6);
+    assert!((g - 0.0).abs() < 1e-6);
+    assert!((b - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn camera_matrix_to_srgb_returns_matrix_for_valid_input() {
+    let xyz2cam = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+    let cam2rgb = camera_matrix_to_srgb(&xyz2cam).unwrap();
+    // All 9 entries should be finite.
+    for row in &cam2rgb {
+        for v in row {
+            assert!(v.is_finite());
+        }
+    }
 }
 
 #[test]

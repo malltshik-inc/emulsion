@@ -44,9 +44,10 @@ Three-zone window:
   Zoom with the mouse wheel. Pan by dragging with the left button or middle button.
   Press **Space** to recenter the image.
 - **Tools (top strip):** the controls that change the image, as toggle tabs
-  (Develop, Simulations, Crop, Rotate, White Balance, Tint, Exposure, Contrast, Saturation).
-  Simulations, Crop, Rotate, White Balance, Tint, Exposure, Contrast and Saturation expand
-  their panels below the strip; **Develop toggles negative→positive immediately without opening a panel**.
+  (Film, Simulations, Crop, Rotate, EV, Contrast, Shadows, Highlights, WB, Tint, Saturation, Vignette).
+  Every tab expands its panel below the strip. The Film panel holds the **Develop**
+  toggle (negative→positive) and the **Output** slider next to it; Output only
+  affects the image while Develop is on.
   Each slider shows a title first, then its rail with the numeric value beside it. The R/G/B black-point
   sliders are hidden in the v1 UI (the params and automatic baseline still apply).
   The Simulations panel puts a search box in its header and adds a strip of film
@@ -118,15 +119,13 @@ Rotate:
 16. **Flip horizontal** (button) — mirrors the image left-to-right
 
 Defaults (MUST be identical on every fresh open): temperature 0, tint 0, exposure 0,
-contrast 0, saturation 0, shadows 0, highlights 0, vignette 0, no film simulation, all black points 0, Develop **off**,
-rotation 0, angle 0, flip off, no crop.
+contrast 0, saturation 0, shadows 0, highlights 0, vignette 0, output 0, no film
+simulation, all black points 0, Develop **off**, rotation 0, angle 0, flip off, no crop.
 
-Conversion baseline (MUST): the negative→positive conversion adds a fixed baseline
-on top of the sliders — exposure **+1.4 EV**, white-balance temperature **+70**,
-contrast **+40**, saturation **+20** — so a neutral scan converts to a usable
-positive on the first Develop click instead of a dark, pale one. A slider at 0
-therefore means "the baseline", not "no adjustment", while Develop is on; the
-baseline never applies to positive (non-inverted) images.
+Output (MUST, Develop only): when Develop (invert) is on, the Output slider
+simultaneously raises exposure, contrast and saturation on top of the per-slider
+values. Range −100..+100; 0 = none. The Output slider only affects the inverted
+path; positive (non-inverted) images are untouched by it.
 
 Behavior requirements (MUST):
 

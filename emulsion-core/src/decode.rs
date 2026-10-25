@@ -6,6 +6,9 @@ use crate::{
     image::LinearImage,
 };
 
+use rawler::imgop::matrix::{multiply, normalize, pseudo_inverse};
+use rawler::imgop::xyz::{Illuminant, SRGB_TO_XYZ_D65};
+
 const RAW_EXTENSIONS: [&str; 16] = [
     ".orf", ".nef", ".cr2", ".cr3", ".arw", ".rw2", ".raf", ".pef", ".srw", ".dng", ".erf", ".kdc",
     ".mrw", ".mos", ".dcr", ".iiq",
@@ -50,7 +53,50 @@ fn decode_raw(path: &str) -> Result<LinearImage> {
     let height = raw.height;
     let cfa = &raw.camera.cfa;
     let pixels = raw.pixels_u16();
-    Ok(demosaic_bilinear(width, height, pixels, cfa))
+    let mut img = demosaic_bilinear(width, height, pixels, cfa);
+
+    // Camera colour matrix: sensor space -> linear sRGB, D65 illuminant.
+    // Applied after demosaic's robust auto-scale, before WB gains in develop().
+    // Missing matrix -> skip, image stays as demosaiced (current behaviour).
+    if let Some(matrix) = raw.camera.color_matrix.get(&Illuminant::D65)
+        && let Some(cam2rgb) = camera_matrix_to_srgb(matrix)
+    {
+        apply_camera_matrix(&mut img, &cam2rgb);
+    }
+
+    Ok(img)
+}
+
+/// Convert rawler's `FlatColorMatrix` (XYZ -> CAM, 9 floats row-major) to a
+/// CAM -> linear sRGB 3x3 matrix.
+///
+/// `color_matrix` is XYZ->CAM. We compute `rgb2cam = color_matrix *
+/// SRGB_TO_XYZ_D65` (sRGB -> CAM), then invert to get CAM -> sRGB.
+pub(crate) fn camera_matrix_to_srgb(matrix: &[f32]) -> Option<[[f32; 3]; 3]> {
+    if matrix.len() != 9 {
+        return None;
+    }
+    let xyz2cam = [
+        [matrix[0], matrix[1], matrix[2]],
+        [matrix[3], matrix[4], matrix[5]],
+        [matrix[6], matrix[7], matrix[8]],
+    ];
+    // rgb2cam = xyz2cam * SRGB_TO_XYZ_D65  => sRGB -> CAM
+    let rgb2cam = normalize(multiply(&xyz2cam, &SRGB_TO_XYZ_D65));
+    // cam2rgb = inverse(rgb2cam)            => CAM -> sRGB
+    Some(pseudo_inverse(rgb2cam))
+}
+
+/// Apply a 3x3 CAM -> linear sRGB matrix to every pixel of `img`, in place.
+pub(crate) fn apply_camera_matrix(img: &mut LinearImage, m: &[[f32; 3]; 3]) {
+    img.data.par_chunks_exact_mut(3).for_each(|pix| {
+        let r = pix[0];
+        let g = pix[1];
+        let b = pix[2];
+        pix[0] = m[0][0] * r + m[0][1] * g + m[0][2] * b;
+        pix[1] = m[1][0] * r + m[1][1] * g + m[1][2] * b;
+        pix[2] = m[2][0] * r + m[2][1] * g + m[2][2] * b;
+    });
 }
 
 fn decode_regular(path: &str) -> Result<LinearImage> {

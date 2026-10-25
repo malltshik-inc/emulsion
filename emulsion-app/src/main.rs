@@ -69,7 +69,7 @@ struct Histogram {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
-    Develop,
+    Film,
     Simulations,
     Wb,
     Tint,
@@ -86,7 +86,7 @@ enum Tool {
 impl Tool {
     fn name(self) -> &'static str {
         match self {
-            Self::Develop => "Develop",
+            Self::Film => "Film",
             Self::Simulations => "Simulations",
             Self::Wb => "White Balance",
             Self::Tint => "Tint",
@@ -103,7 +103,7 @@ impl Tool {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Develop => "DEVELOP",
+            Self::Film => "FILM",
             Self::Simulations => "SIMULATIONS",
             Self::Wb => "WB",
             Self::Tint => "TINT",
@@ -118,26 +118,9 @@ impl Tool {
         }
     }
 
-    fn code(self) -> &'static str {
-        match self {
-            Self::Develop => "DEVELOP",
-            Self::Simulations => "SIMULATION",
-            Self::Wb => "WB",
-            Self::Tint => "TINT",
-            Self::Ev => "EV",
-            Self::Contrast => "CONTRAST",
-            Self::Saturation => "SATURATION",
-            Self::Shadows => "SHADOWS",
-            Self::Highlights => "HIGHLIGHTS",
-            Self::Vignette => "EDGE",
-            Self::Rotate => "ANGLE",
-            Self::Crop => "ASPECT",
-        }
-    }
-
     fn aliases(self) -> &'static str {
         match self {
-            Self::Develop => "develop negative positive invert",
+            Self::Film => "develop negative positive invert film",
             Self::Simulations => "film simulation lut negative positive invert develop",
             Self::Wb => "white balance temperature warm cool",
             Self::Tint => "tint magenta green",
@@ -156,7 +139,7 @@ impl Tool {
         match self {
             Self::Ev => -3.0..=3.0,
             Self::Rotate => -5.0..=5.0,
-            Self::Crop | Self::Develop | Self::Simulations => 0.0..=0.0, // use different UI
+            Self::Crop | Self::Simulations => 0.0..=0.0, // use different UI
             _ => -100.0..=100.0,
         }
     }
@@ -186,13 +169,14 @@ impl Tool {
             Self::Highlights => Some(&mut params.highlights),
             Self::Vignette => Some(&mut params.vignette),
             Self::Rotate => Some(&mut params.fine_angle),
-            Self::Crop | Self::Develop | Self::Simulations => None,
+            Self::Film => Some(&mut params.invert_sensitivity),
+            Self::Crop | Self::Simulations => None,
         }
     }
 
     fn changed(self, params: &PipelineParams) -> bool {
         match self {
-            Self::Develop => params.invert,
+            Self::Film => params.invert,
             Self::Simulations => params.film.is_some(),
             Self::Rotate => {
                 params.fine_angle != 0.0 || params.rotate_90 != 0 || params.flip_horizontal
@@ -1365,7 +1349,7 @@ impl EmulsionApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             const TOOLS: &[Tool] = &[
-                                Tool::Develop,
+                                Tool::Film,
                                 Tool::Simulations,
                                 Tool::Crop,
                                 Tool::Rotate,
@@ -1410,10 +1394,7 @@ impl EmulsionApp {
                 .corner_radius(10.0)
                 .inner_margin(Margin::symmetric(15, 0));
             frame.show(ui, |ui| {
-                if tool == Tool::Develop {
-                    open_tool = None;
-                    params.invert = !params.invert;
-                } else if tool == Tool::Simulations {
+                if tool == Tool::Simulations {
                     self.film_controls(ui, &mut params);
                 } else if tool == Tool::Crop {
                     crop_controls(self, ui, &mut params);
@@ -1427,22 +1408,15 @@ impl EmulsionApp {
                                 Layout::left_to_right(Align::Center),
                                 |ui| {
                                     ui.spacing_mut().item_spacing.y = 1.0;
-                                    ui.label(
-                                        RichText::new(tool.name()).size(14.0).strong().color(TEXT),
-                                    );
-                                    if tool != Tool::Rotate {
-                                        ui.label(
-                                            RichText::new(tool.code())
-                                                .size(10.5)
-                                                .strong()
-                                                .color(DIM),
-                                        );
-                                    }
                                 },
                             );
 
                             if tool == Tool::Rotate {
                                 rotate_buttons(ui, &mut params);
+                            }
+
+                            if tool == Tool::Film {
+                                develop_buttons(ui, &mut params);
                             }
 
                             match tool {
@@ -2633,20 +2607,29 @@ fn rotate_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
     ui.add_space(4.0);
 }
 
+fn develop_buttons(ui: &mut egui::Ui, params: &mut PipelineParams) {
+    let btn = |label: &str| {
+        egui::Button::new(RichText::new(label).size(12.0).color(MUTED))
+            .fill(if params.invert {
+                ACCENT_SOFT
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(Stroke::new(1.0, LINE))
+            .corner_radius(6.0)
+            .min_size(vec2(52.0, 28.0))
+    };
+    if ui.add(btn("DEVELOP")).clicked() {
+        params.invert = !params.invert;
+    }
+    ui.add_space(4.0);
+}
+
 fn crop_controls(app: &mut EmulsionApp, ui: &mut egui::Ui, params: &mut PipelineParams) {
     ui.allocate_ui_with_layout(
         vec2(ui.available_width(), 50.0),
         Layout::left_to_right(Align::Center),
         |ui| {
-            ui.allocate_ui_with_layout(
-                vec2(140.0, 50.0),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(RichText::new("Crop").size(14.0).strong().color(TEXT));
-                },
-            );
-            ui.add_space(18.0);
-
             let mut aspect = app.crop_aspect;
             egui::ComboBox::from_id_salt("crop_aspect")
                 .selected_text(aspect.label())
@@ -3158,6 +3141,43 @@ mod tests {
     }
 
     #[test]
+    fn every_slider_tool_has_a_movable_range() {
+        // Regression: the Film (Develop) slider was mapped to
+        // `invert_sensitivity` but kept the 0..=0 "no slider" range, so it
+        // rendered without a rail and could not be dragged.
+        let mut params = PipelineParams::default();
+        for tool in [
+            Tool::Film,
+            Tool::Simulations,
+            Tool::Wb,
+            Tool::Tint,
+            Tool::Ev,
+            Tool::Contrast,
+            Tool::Saturation,
+            Tool::Shadows,
+            Tool::Highlights,
+            Tool::Vignette,
+            Tool::Rotate,
+            Tool::Crop,
+        ] {
+            if tool.value_mut(&mut params).is_none() {
+                continue;
+            }
+            let range = tool.range();
+            assert!(
+                range.start() < range.end(),
+                "{} slider has an empty range",
+                tool.name()
+            );
+            assert!(
+                range.contains(&0.0),
+                "{} slider cannot reach its neutral value",
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
     fn film_panel_widgets_render_headless() {
         egui::__run_test_ui(|ui| {
             let mut base = emulsion_core::image::LinearImage::new(2, 2);
@@ -3185,5 +3205,87 @@ mod tests {
             let clicked = film_card(ui, None, "No simulation", None, true);
             assert!(!clicked);
         });
+    }
+    fn draw_slider(
+        ctx: &egui::Context,
+        value: &mut f32,
+        rect: &mut Rect,
+        range: &std::ops::RangeInclusive<f32>,
+        input: egui::RawInput,
+    ) {
+        ctx.run_ui(input, |ui| {
+            *rect = ui
+                .add(
+                    egui::Slider::new(value, range.clone())
+                        .show_value(false)
+                        .step_by(1.0),
+                )
+                .rect;
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn film_slider_drag_updates_invert_sensitivity() {
+        // Regression: the Film (Develop) panel's Output slider was wired to
+        // `invert_sensitivity` but kept the 0..=0 "no slider" range, so it had
+        // no rail and a drag left the value at 0.
+        let ctx = egui::Context::default();
+        let mut params = PipelineParams::default();
+        let range = Tool::Film.range();
+        let mut rect = Rect::NOTHING;
+        let value = Tool::Film.value_mut(&mut params).unwrap();
+
+        draw_slider(&ctx, value, &mut rect, &range, egui::RawInput::default());
+        draw_slider(&ctx, value, &mut rect, &range, egui::RawInput::default());
+        let start = rect.center();
+        let end = egui::pos2(rect.right() - 4.0, rect.center().y);
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(start),
+                    egui::Event::PointerButton {
+                        pos: start,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: Default::default(),
+                    },
+                ],
+                ..Default::default()
+            },
+        );
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![egui::Event::PointerMoved(end)],
+                ..Default::default()
+            },
+        );
+        draw_slider(
+            &ctx,
+            value,
+            &mut rect,
+            &range,
+            egui::RawInput {
+                events: vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }],
+                ..Default::default()
+            },
+        );
+
+        let moved = *value;
+        assert!(moved > 50.0, "film slider did not move: {moved}");
+        assert_eq!(params.invert_sensitivity, moved);
     }
 }
