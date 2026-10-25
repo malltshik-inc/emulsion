@@ -29,11 +29,11 @@ small set). Tick off as done; `docs/TODO.md` travels with every commit.
 
 ## 3. Tests
 
-- [ ] core: `save_png`, `process()`, `decode` on a regular image, `CoreError::message`
-- [ ] app: `histogram::make_histogram`
-- [ ] app: `util::aspect_label`, `util::cover_uv`
+- [x] core: `save_png`, `process()`, `decode` on a regular image, `CoreError::message`
+- [x] app: `histogram::make_histogram`
+- [x] app: `util::aspect_label`, `util::cover_uv`
 - [ ] app: crop drag math (extracted in item 6) — `free_resize`, `ratio_resize`, `ratio_draw`, `crop_from_drag`, `normalize_crop`
-- [ ] app: sparse (not-yet-loaded) index handling in `sync_thumbnails` if touched
+- [x] app: sparse (not-yet-loaded) index handling in `sync_thumbnails` if touched
 
 ## 4. Perf — core
 

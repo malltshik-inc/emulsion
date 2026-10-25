@@ -836,25 +836,19 @@ fn decode_thumbnail_resizes_regular_image() {
     assert_eq!(thumb.image.width, 50);
     assert_eq!(thumb.image.height, 25);
     assert_eq!(thumb.image.data.len(), 50 * 25 * 3);
-    assert!(
-        thumb
-            .image
-            .data
-            .iter()
-            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
-    );
+    assert!(thumb
+        .image
+        .data
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
 
     std::fs::remove_file(&path).ok();
 }
 
 #[test]
 fn develop_output_dims_follow_crop_and_rotation() {
-    // The preview's `texture_size` must equal the *developed* output's aspect;
-    // deriving it from base dims (base + rotate swap) made a cropped preview
-    // stretch to the uncropped aspect while the export stayed correct.
-    let img = make_img(200, 100, 0.5);
-
     // 200x100 -> rotate 90° -> 100x200, then crop to half.
+    let img = make_img(200, 100, 0.5);
     let rotated = PipelineParams {
         rotate_90: 1,
         crop: Some(CropRect {
@@ -880,4 +874,60 @@ fn develop_output_dims_follow_crop_and_rotation() {
     };
     let out = develop(&img, &narrow);
     assert_eq!((out.width, out.height), (10, 100));
+}
+
+#[test]
+fn core_error_message_returns_text() {
+    use crate::error::CoreError;
+    assert_eq!(CoreError::Io("read".into()).message(), "read");
+    assert_eq!(CoreError::Unsupported("raw".into()).message(), "raw");
+    assert_eq!(CoreError::Internal("dev".into()).message(), "dev");
+}
+
+fn write_test_png(path: &str, w: u32, h: u32) {
+    let mut img = image::RgbaImage::new(w, h);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        p.0 = [x as u8, y as u8, ((x + y) * 2) as u8, 255];
+    }
+    img.save(path).unwrap();
+}
+
+#[test]
+fn decode_regular_and_process_roundtrip() {
+    use crate::decode::decode;
+
+    let path = std::env::temp_dir().join("emulsion_process_test.png");
+    let s = path.to_str().unwrap();
+    write_test_png(s, 64, 32);
+
+    let base = decode(s).unwrap();
+    assert_eq!((base.width, base.height), (64, 32));
+    assert!(base
+        .data
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v)));
+
+    let out = crate::process(s, &PipelineParams::default()).unwrap();
+    assert_eq!((out.width, out.height), (64, 32));
+    assert_eq!(out.data.len(), 64 * 32 * 4);
+
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn save_png_roundtrips_bytes() {
+    use crate::export::save_png;
+
+    let mut img = RgbaImage::new(8, 8);
+    for (i, byte) in img.data.iter_mut().enumerate() {
+        *byte = (i * 7) as u8;
+    }
+    let path = std::env::temp_dir().join("emulsion_png_roundtrip.png");
+    save_png(path.to_str().unwrap(), &img).unwrap();
+
+    let decoded = image::open(&path).unwrap().to_rgba8();
+    assert_eq!(decoded.dimensions(), (8, 8));
+    assert_eq!(decoded.as_raw(), &img.data);
+
+    std::fs::remove_file(&path).ok();
 }

@@ -1,7 +1,7 @@
 //! Small path, label and geometry helpers.
 
 use eframe::egui;
-use egui::{Pos2, Rect, Vec2, pos2};
+use egui::{pos2, Pos2, Rect, Vec2};
 
 pub(crate) fn file_name(path: &str) -> String {
     match std::path::Path::new(path).file_name() {
@@ -59,5 +59,42 @@ pub(crate) fn cover_uv(image: Vec2, target: Vec2) -> Rect {
         let fraction = image_aspect / target_aspect;
         let inset = (1.0 - fraction) / 2.0;
         Rect::from_min_max(pos2(0.0, inset), pos2(1.0, 1.0 - inset))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{aspect_label, cover_uv};
+    use eframe::egui;
+
+    #[test]
+    fn aspect_label_matches_known_ratios() {
+        assert_eq!(aspect_label(3, 2), "3:2");
+        assert_eq!(aspect_label(16, 9), "16:9");
+        assert_eq!(aspect_label(4, 4), "1:1");
+        assert_eq!(aspect_label(4, 5), "4:5");
+        assert_eq!(aspect_label(10, 20), "0.50");
+    }
+
+    #[test]
+    fn aspect_label_falls_back_to_ratio() {
+        assert_eq!(aspect_label(1000, 1), "1000.00");
+        assert_eq!(aspect_label(0, 0), "—");
+    }
+
+    #[test]
+    fn cover_uv_insets_wider_image() {
+        // image 2:1, target 1:1 -> x inset 0.25.
+        let uv = cover_uv(egui::vec2(200.0, 100.0), egui::vec2(100.0, 100.0));
+        assert!((uv.min.x - 0.25).abs() < 1e-6 && (uv.max.x - 0.75).abs() < 1e-6);
+        assert!(uv.min.y == 0.0 && uv.max.y == 1.0);
+    }
+
+    #[test]
+    fn cover_uv_insets_taller_target() {
+        // image 1:2, target 1:1 -> y inset 0.25.
+        let uv = cover_uv(egui::vec2(100.0, 200.0), egui::vec2(100.0, 100.0));
+        assert!(uv.min.x == 0.0 && uv.max.x == 1.0);
+        assert!((uv.min.y - 0.25).abs() < 1e-6 && (uv.max.y - 0.75).abs() < 1e-6);
     }
 }
